@@ -9,23 +9,16 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
-use tower_http::{
-    cors::CorsLayer,
-    trace::TraceLayer,
-};
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
 
 use crate::errors::CerberusError;
 
-use crate::{
-    config::Config,
-    database::DatabaseManager,
-    monitoring::SystemMetrics,
-};
+use crate::{config::Config, database::DatabaseManager, monitoring::SystemMetrics};
 
 pub mod handlers;
-pub mod models;
 pub mod middleware;
+pub mod models;
 
 pub use handlers::*;
 // pub use models::*;
@@ -67,7 +60,7 @@ impl ApiServer {
     pub async fn bind(&mut self) -> Result<()> {
         let addr = format!("0.0.0.0:{}", self.state.config.http_port);
         let listener = TcpListener::bind(&addr).await?;
-        
+
         info!("API server bound to {}", addr);
         self.listener = Some(listener);
         Ok(())
@@ -79,44 +72,36 @@ impl ApiServer {
             // Health endpoints
             .route("/health", get(health_handler))
             .route("/health/detailed", get(detailed_health_handler))
-            
             // Metrics endpoints
             .route("/metrics", get(metrics_handler))
             .route("/metrics/prometheus", get(prometheus_metrics_handler))
-            
             // Signal endpoints
             .route("/api/signals", get(get_signals_handler))
             .route("/api/signals", post(create_signal_handler))
             .route("/api/signals/validate", post(validate_signals_handler))
             .route("/api/signals/:id", get(get_signal_handler))
-            
             // Risk management endpoints
             .route("/api/risk/assess", post(assess_risk_handler))
             .route("/api/risk/status", get(risk_status_handler))
-            
             // Trading endpoints
             .route("/api/trades", get(get_trades_handler))
             .route("/api/trades", post(execute_trade_handler))
             .route("/api/trades/:id", get(get_trade_handler))
-            
             // Position endpoints
             .route("/api/positions", get(get_positions_handler))
             .route("/api/positions/:id", get(get_position_handler))
             .route("/api/positions/:id/close", post(close_position_handler))
-            
             // System control endpoints
             .route("/api/system/status", get(system_status_handler))
             .route("/api/system/emergency-stop", post(emergency_stop_handler))
             .route("/api/system/reset", post(reset_system_handler))
-            
             // Configuration endpoints
             .route("/api/config", get(get_config_handler))
             .route("/api/config/validate", post(validate_config_handler))
-            
             .layer(
                 ServiceBuilder::new()
                     .layer(TraceLayer::new_for_http())
-                    .layer(CorsLayer::permissive())
+                    .layer(CorsLayer::permissive()),
             )
             .with_state(self.state.clone())
     }
@@ -130,8 +115,11 @@ impl ApiServer {
         let listener = self.listener.take().unwrap();
         let router = self.create_router();
 
-        info!("Starting API server on port {}", self.state.config.http_port);
-        
+        info!(
+            "Starting API server on port {}",
+            self.state.config.http_port
+        );
+
         axum::serve(listener, router)
             .await
             .map_err(|e| anyhow::anyhow!("API server error: {}", e))?;

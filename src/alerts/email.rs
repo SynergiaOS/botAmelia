@@ -1,9 +1,9 @@
 use anyhow::Result;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
 
-use crate::monitoring::SystemAlert;
 use super::AlertSenderTrait;
+use crate::monitoring::SystemAlert;
 
 /// Email alert sender
 pub struct EmailSender {
@@ -14,9 +14,13 @@ pub struct EmailSender {
 }
 
 impl EmailSender {
-    pub fn new(smtp_server: Option<String>, from_email: Option<String>, to_email: Option<String>) -> Self {
+    pub fn new(
+        smtp_server: Option<String>,
+        from_email: Option<String>,
+        to_email: Option<String>,
+    ) -> Self {
         let enabled = smtp_server.is_some() && from_email.is_some() && to_email.is_some();
-        
+
         Self {
             smtp_server,
             from_email,

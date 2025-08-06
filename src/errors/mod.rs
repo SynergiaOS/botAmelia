@@ -7,71 +7,71 @@ pub enum CerberusError {
     /// Błędy konfiguracji
     #[error("Configuration error: {message}")]
     Configuration { message: String },
-    
+
     /// Błędy bazy danych
     #[error("Database error: {message}")]
     Database { message: String },
-    
+
     /// Błędy tradingu
     #[error("Trading error: {message}")]
     Trading { message: String },
-    
+
     /// Błędy zarządzania ryzykiem
     #[error("Risk management error: {message}")]
     RiskManagement { message: String },
-    
+
     /// Błędy sygnałów
     #[error("Signal processing error: {message}")]
     SignalProcessing { message: String },
-    
+
     /// Błędy sieci
     #[error("Network error: {message}")]
     Network { message: String },
-    
+
     /// Błędy autoryzacji
     #[error("Authentication error: {message}")]
     Authentication { message: String },
-    
+
     /// Błędy walidacji
     #[error("Validation error: {message}")]
     Validation { message: String },
-    
+
     /// Błędy cache
     #[error("Cache error: {message}")]
     Cache { message: String },
-    
+
     /// Błędy bezpieczeństwa
     #[error("Security error: {message}")]
     Security { message: String },
-    
+
     /// Błędy monitorowania
     #[error("Monitoring error: {message}")]
     Monitoring { message: String },
-    
+
     /// Błędy alertów
     #[error("Alert error: {message}")]
     Alert { message: String },
-    
+
     /// Błędy zewnętrzne (API, itp.)
     #[error("External service error: {service} - {message}")]
     ExternalService { service: String, message: String },
-    
+
     /// Błędy wewnętrzne
     #[error("Internal error: {message}")]
     Internal { message: String },
-    
+
     /// Błędy timeout
     #[error("Timeout error: {operation} timed out after {seconds}s")]
     Timeout { operation: String, seconds: u64 },
-    
+
     /// Błędy rate limiting
     #[error("Rate limit exceeded: {message}")]
     RateLimit { message: String },
-    
+
     /// Błędy parsowania
     #[error("Parse error: {message}")]
     Parse { message: String },
-    
+
     /// Błędy IO
     #[error("IO error: {message}")]
     Io { message: String },
@@ -91,16 +91,16 @@ pub enum ErrorLevel {
 pub struct ErrorContext {
     /// Komponent, w którym wystąpił błąd
     pub component: String,
-    
+
     /// Operacja, podczas której wystąpił błąd
     pub operation: String,
-    
+
     /// Dodatkowe metadane
     pub metadata: serde_json::Value,
-    
+
     /// Czas wystąpienia
     pub timestamp: i64,
-    
+
     /// Stack trace (jeśli dostępny)
     pub stack_trace: Option<String>,
 }
@@ -129,7 +129,7 @@ impl CerberusError {
             CerberusError::Io { .. } => sentry::Level::Error,
         }
     }
-    
+
     /// Zwraca kategorię błędu
     pub fn category(&self) -> &'static str {
         match self {
@@ -153,7 +153,7 @@ impl CerberusError {
             CerberusError::Io { .. } => "io",
         }
     }
-    
+
     /// Sprawdza czy błąd jest krytyczny
     pub fn is_critical(&self) -> bool {
         matches!(
@@ -161,39 +161,39 @@ impl CerberusError {
             CerberusError::Security { .. } | CerberusError::Internal { .. }
         )
     }
-    
+
     /// Sprawdza czy błąd można ponowić
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            CerberusError::Network { .. } |
-            CerberusError::ExternalService { .. } |
-            CerberusError::Timeout { .. } |
-            CerberusError::Database { .. }
+            CerberusError::Network { .. }
+                | CerberusError::ExternalService { .. }
+                | CerberusError::Timeout { .. }
+                | CerberusError::Database { .. }
         )
     }
-    
+
     /// Raportuje błąd do Sentry z kontekstem
     pub fn report_to_sentry(&self, context: Option<ErrorContext>) {
         sentry::configure_scope(|scope| {
             scope.set_tag("error_category", self.category());
             scope.set_tag("error_critical", self.is_critical().to_string());
             scope.set_tag("error_retryable", self.is_retryable().to_string());
-            
+
             if let Some(ctx) = &context {
                 scope.set_tag("component", &ctx.component);
                 scope.set_tag("operation", &ctx.operation);
                 scope.set_extra("metadata", ctx.metadata.clone().into());
                 scope.set_extra("timestamp", ctx.timestamp.into());
-                
+
                 if let Some(ref stack_trace) = ctx.stack_trace {
                     scope.set_extra("stack_trace", stack_trace.clone().into());
                 }
             }
         });
-        
+
         sentry::capture_error(self);
-        
+
         // Logowanie błędu
         match self.sentry_level() {
             sentry::Level::Fatal => tracing::error!("FATAL ERROR: {}", self),
@@ -216,13 +216,13 @@ impl ErrorContext {
             stack_trace: None,
         }
     }
-    
+
     /// Dodaje metadane do kontekstu
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = metadata;
         self
     }
-    
+
     /// Dodaje stack trace do kontekstu
     pub fn with_stack_trace(mut self, stack_trace: String) -> Self {
         self.stack_trace = Some(stack_trace);
@@ -260,10 +260,10 @@ where
             let error = CerberusError::Internal {
                 message: e.to_string(),
             };
-            
+
             let context = ErrorContext::new(component.to_string(), operation.to_string());
             error.report_to_sentry(Some(context));
-            
+
             error
         })
     }
@@ -317,7 +317,7 @@ pub type CerberusResult<T> = Result<T, CerberusError>;
 /// Utility funkcje dla obsługi błędów
 pub mod utils {
     use super::*;
-    
+
     /// Retry mechanizm dla operacji, które mogą się nie powieść
     pub async fn retry_operation<F, T, E>(
         operation: F,
@@ -329,28 +329,28 @@ pub mod utils {
         E: std::error::Error,
     {
         let mut last_error = None;
-        
+
         for attempt in 0..=max_retries {
             match operation().await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     last_error = Some(e);
-                    
+
                     if attempt < max_retries {
                         tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                     }
                 }
             }
         }
-        
+
         Err(last_error.unwrap())
     }
-    
+
     /// Loguje błąd z odpowiednim poziomem
     pub fn log_error(error: &CerberusError, context: Option<&ErrorContext>) {
         let level = error.sentry_level();
         let message = format!("{} (category: {})", error, error.category());
-        
+
         match level {
             sentry::Level::Fatal => tracing::error!("{}", message),
             sentry::Level::Error => tracing::error!("{}", message),
@@ -358,9 +358,13 @@ pub mod utils {
             sentry::Level::Info => tracing::info!("{}", message),
             _ => tracing::debug!("{}", message),
         }
-        
+
         if let Some(ctx) = context {
-            tracing::debug!("Error context: component={}, operation={}", ctx.component, ctx.operation);
+            tracing::debug!(
+                "Error context: component={}, operation={}",
+                ctx.component,
+                ctx.operation
+            );
         }
     }
 }

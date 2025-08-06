@@ -1,9 +1,9 @@
 use anyhow::Result;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
 
-use crate::monitoring::SystemAlert;
 use super::AlertSenderTrait;
+use crate::monitoring::SystemAlert;
 
 /// Telegram alert sender
 pub struct TelegramSender {
@@ -15,7 +15,7 @@ pub struct TelegramSender {
 impl TelegramSender {
     pub fn new(bot_token: Option<String>, chat_id: Option<String>) -> Self {
         let enabled = bot_token.is_some() && chat_id.is_some();
-        
+
         Self {
             bot_token,
             chat_id,

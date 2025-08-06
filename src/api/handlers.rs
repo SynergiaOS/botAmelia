@@ -4,13 +4,13 @@ use axum::{
     response::Json,
 };
 use serde_json::Value;
-use tracing::{info, error, warn};
+use tracing::{error, info, warn};
 
-use super::{ApiState, ApiResponse, PaginationParams, TimeRangeParams};
+use super::{ApiResponse, ApiState, PaginationParams, TimeRangeParams};
 use crate::{
-    monitoring::{HealthReport, ComponentHealth, HealthStatus},
-    signals::Signal,
     errors::CerberusError,
+    monitoring::{ComponentHealth, HealthReport, HealthStatus},
+    signals::Signal,
 };
 
 /// Health check endpoint
@@ -18,7 +18,7 @@ pub async fn health_handler(
     State(state): State<ApiState>,
 ) -> Result<Json<ApiResponse<HealthReport>>, (StatusCode, Json<ApiResponse<()>>)> {
     info!("Health check requested");
-    
+
     // Sprawdzenie stanu bazy danych
     let db_health = match state.db_manager.health_check().await {
         Ok(_) => ComponentHealth {
@@ -37,7 +37,7 @@ pub async fn health_handler(
 
     let mut health_report = HealthReport::new();
     health_report.add_component("database".to_string(), db_health);
-    
+
     // Sprawdzenie metryk systemu
     let metrics = state.metrics.clone();
     let system_health = ComponentHealth {
@@ -55,7 +55,7 @@ pub async fn health_handler(
             m
         },
     };
-    
+
     health_report.add_component("system".to_string(), system_health);
 
     Ok(Json(ApiResponse::success(health_report)))
@@ -66,9 +66,9 @@ pub async fn detailed_health_handler(
     State(state): State<ApiState>,
 ) -> Result<Json<ApiResponse<Value>>, (StatusCode, Json<ApiResponse<()>>)> {
     info!("Detailed health check requested");
-    
+
     let metrics = state.metrics.clone();
-    
+
     let detailed_health = serde_json::json!({
         "system": {
             "uptime_seconds": chrono::Utc::now().timestamp() - metrics.last_updated,
@@ -109,13 +109,17 @@ pub async fn metrics_handler(
     State(state): State<ApiState>,
 ) -> Result<Json<ApiResponse<Value>>, (StatusCode, Json<ApiResponse<()>>)> {
     info!("Metrics requested");
-    
+
     let metrics = state.metrics.clone();
-    let metrics_json = serde_json::to_value(&*metrics)
-        .map_err(|e| {
-            error!("Failed to serialize metrics: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<()>::error("Failed to serialize metrics".to_string())))
-        })?;
+    let metrics_json = serde_json::to_value(&*metrics).map_err(|e| {
+        error!("Failed to serialize metrics: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::<()>::error(
+                "Failed to serialize metrics".to_string(),
+            )),
+        )
+    })?;
 
     Ok(Json(ApiResponse::success(metrics_json)))
 }
@@ -197,7 +201,7 @@ pub async fn get_signals_handler(
     Query(time_params): Query<TimeRangeParams>,
 ) -> Result<Json<ApiResponse<Value>>, (StatusCode, Json<ApiResponse<()>>)> {
     info!("Get signals requested with pagination: {:?}", params);
-    
+
     // TODO: Implement actual signal retrieval from database
     let mock_signals = serde_json::json!({
         "signals": [],
@@ -240,7 +244,7 @@ pub async fn validate_signals_handler(
     Json(_signals): Json<Value>,
 ) -> Result<Json<ApiResponse<Value>>, (StatusCode, Json<ApiResponse<()>>)> {
     info!("Validate signals requested");
-    
+
     // TODO: Implement signal validation logic
     let validation_result = serde_json::json!({
         "valid_signals": [],
@@ -295,7 +299,7 @@ pub async fn risk_status_handler(
     State(_state): State<ApiState>,
 ) -> Result<Json<ApiResponse<Value>>, (StatusCode, Json<ApiResponse<()>>)> {
     info!("Risk status requested");
-    
+
     let risk_status = serde_json::json!({
         "circuit_breaker_active": false,
         "daily_loss": 0.0,

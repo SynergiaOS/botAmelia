@@ -1,9 +1,9 @@
 use anyhow::Result;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
 
-use crate::monitoring::SystemAlert;
 use super::AlertSenderTrait;
+use crate::monitoring::SystemAlert;
 
 /// Basic alert sender implementation
 pub struct AlertSender {
@@ -18,7 +18,7 @@ impl AlertSender {
             enabled: true,
         }
     }
-    
+
     pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self

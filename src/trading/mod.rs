@@ -1,6 +1,6 @@
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use anyhow::Result;
 
 use crate::risk::TradeSide;
 
@@ -27,34 +27,34 @@ pub enum OrderType {
 pub struct TradeOrder {
     /// Identyfikator zlecenia
     pub id: String,
-    
+
     /// Token/symbol
     pub token: String,
-    
+
     /// Strona transakcji
     pub side: TradeSide,
-    
+
     /// Rozmiar pozycji
     pub size: f64,
-    
+
     /// Dźwignia
     pub leverage: u8,
-    
+
     /// Typ zlecenia
     pub order_type: OrderType,
-    
+
     /// Cena (dla zleceń limit)
     pub price: Option<f64>,
-    
+
     /// Stop price (dla zleceń stop)
     pub stop_price: Option<f64>,
-    
+
     /// Czas utworzenia
     pub created_at: i64,
-    
+
     /// Timeout zlecenia (w sekundach)
     pub timeout: u64,
-    
+
     /// Dodatkowe parametry
     pub metadata: serde_json::Value,
 }
@@ -64,25 +64,25 @@ pub struct TradeOrder {
 pub struct ExecutionResult {
     /// Czy transakcja została wykonana pomyślnie
     pub success: bool,
-    
+
     /// Identyfikator transakcji
     pub transaction_id: Option<String>,
-    
+
     /// Wykonana cena
     pub executed_price: Option<f64>,
-    
+
     /// Wykonany rozmiar
     pub executed_size: Option<f64>,
-    
+
     /// Opłaty
     pub fees: Option<f64>,
-    
+
     /// Czas wykonania
     pub executed_at: Option<i64>,
-    
+
     /// Komunikat błędu (jeśli wystąpił)
     pub error_message: Option<String>,
-    
+
     /// Dodatkowe informacje
     pub metadata: serde_json::Value,
 }
@@ -92,16 +92,16 @@ pub struct ExecutionResult {
 pub trait TradeExecutorTrait: Send + Sync {
     /// Wykonuje zlecenie handlowe
     async fn execute_trade(&self, order: &TradeOrder) -> Result<ExecutionResult>;
-    
+
     /// Zamyka pozycję
     async fn close_position(&self, position_id: &str) -> Result<()>;
-    
+
     /// Pobiera aktualną cenę
     async fn get_current_price(&self, token: &str) -> Result<f64>;
-    
+
     /// Sprawdza status zlecenia
     async fn get_order_status(&self, order_id: &str) -> Result<OrderStatus>;
-    
+
     /// Anuluje zlecenie
     async fn cancel_order(&self, order_id: &str) -> Result<()>;
 }
@@ -119,12 +119,7 @@ pub enum OrderStatus {
 
 impl TradeOrder {
     /// Tworzy nowe zlecenie rynkowe
-    pub fn market_order(
-        token: String,
-        side: TradeSide,
-        size: f64,
-        leverage: u8,
-    ) -> Self {
+    pub fn market_order(token: String, side: TradeSide, size: f64, leverage: u8) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             token,
@@ -139,7 +134,7 @@ impl TradeOrder {
             metadata: serde_json::Value::Null,
         }
     }
-    
+
     /// Tworzy nowe zlecenie limitowe
     pub fn limit_order(
         token: String,
@@ -162,7 +157,7 @@ impl TradeOrder {
             metadata: serde_json::Value::Null,
         }
     }
-    
+
     /// Tworzy zlecenie stop-loss
     pub fn stop_loss_order(
         token: String,
@@ -185,31 +180,31 @@ impl TradeOrder {
             metadata: serde_json::Value::Null,
         }
     }
-    
+
     /// Sprawdza czy zlecenie wygasło
     pub fn is_expired(&self) -> bool {
         let now = chrono::Utc::now().timestamp();
         now - self.created_at > self.timeout as i64
     }
-    
+
     /// Waliduje zlecenie
     pub fn validate(&self) -> Result<()> {
         if self.token.is_empty() {
             return Err(anyhow::anyhow!("Token cannot be empty"));
         }
-        
+
         if self.size <= 0.0 {
             return Err(anyhow::anyhow!("Size must be greater than 0"));
         }
-        
+
         if self.leverage == 0 {
             return Err(anyhow::anyhow!("Leverage must be greater than 0"));
         }
-        
+
         if self.leverage > 100 {
             return Err(anyhow::anyhow!("Leverage cannot exceed 100"));
         }
-        
+
         match self.order_type {
             OrderType::Limit => {
                 if self.price.is_none() {
@@ -231,7 +226,7 @@ impl TradeOrder {
                 // Zlecenia rynkowe nie wymagają dodatkowej walidacji
             }
         }
-        
+
         Ok(())
     }
 }
@@ -255,7 +250,7 @@ impl ExecutionResult {
             metadata: serde_json::Value::Null,
         }
     }
-    
+
     /// Tworzy wynik błędu
     pub fn error(error_message: String) -> Self {
         Self {
@@ -269,7 +264,7 @@ impl ExecutionResult {
             metadata: serde_json::Value::Null,
         }
     }
-    
+
     /// Sprawdza czy wykonanie było częściowe
     pub fn is_partial(&self, original_size: f64) -> bool {
         if let Some(executed_size) = self.executed_size {
@@ -285,31 +280,31 @@ impl ExecutionResult {
 pub struct TradingStats {
     /// Całkowita liczba transakcji
     pub total_trades: u64,
-    
+
     /// Liczba udanych transakcji
     pub successful_trades: u64,
-    
+
     /// Liczba nieudanych transakcji
     pub failed_trades: u64,
-    
+
     /// Całkowity P&L
     pub total_pnl: f64,
-    
+
     /// Najlepszy trade
     pub best_trade: f64,
-    
+
     /// Najgorszy trade
     pub worst_trade: f64,
-    
+
     /// Średni czas wykonania (w ms)
     pub avg_execution_time: f64,
-    
+
     /// Całkowite opłaty
     pub total_fees: f64,
-    
+
     /// Współczynnik sukcesu
     pub success_rate: f64,
-    
+
     /// Ostatnia aktualizacja
     pub last_updated: i64,
 }
@@ -364,7 +359,9 @@ impl TradingStats {
         }
 
         // Aktualizacja średniego czasu wykonania
-        self.avg_execution_time = (self.avg_execution_time * (self.total_trades - 1) as f64 + execution_time_ms) / self.total_trades as f64;
+        self.avg_execution_time = (self.avg_execution_time * (self.total_trades - 1) as f64
+            + execution_time_ms)
+            / self.total_trades as f64;
 
         // Aktualizacja współczynnika sukcesu
         self.success_rate = self.successful_trades as f64 / self.total_trades as f64;
@@ -380,12 +377,7 @@ mod tests {
 
     #[test]
     fn test_market_order_creation() {
-        let order = TradeOrder::market_order(
-            "BONK".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-        );
+        let order = TradeOrder::market_order("BONK".to_string(), TradeSide::Long, 100.0, 5);
 
         assert_eq!(order.token, "BONK");
         assert_eq!(order.side, TradeSide::Long);
@@ -400,13 +392,7 @@ mod tests {
 
     #[test]
     fn test_limit_order_creation() {
-        let order = TradeOrder::limit_order(
-            "BONK".to_string(),
-            TradeSide::Short,
-            50.0,
-            10,
-            0.001,
-        );
+        let order = TradeOrder::limit_order("BONK".to_string(), TradeSide::Short, 50.0, 10, 0.001);
 
         assert_eq!(order.token, "BONK");
         assert_eq!(order.side, TradeSide::Short);
@@ -420,13 +406,8 @@ mod tests {
 
     #[test]
     fn test_stop_loss_order_creation() {
-        let order = TradeOrder::stop_loss_order(
-            "TEST".to_string(),
-            TradeSide::Long,
-            75.0,
-            3,
-            0.0008,
-        );
+        let order =
+            TradeOrder::stop_loss_order("TEST".to_string(), TradeSide::Long, 75.0, 3, 0.0008);
 
         assert_eq!(order.order_type, OrderType::StopLoss);
         assert!(order.price.is_none());
@@ -436,85 +417,50 @@ mod tests {
 
     #[test]
     fn test_order_validation_valid_market() {
-        let order = TradeOrder::market_order(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-        );
+        let order = TradeOrder::market_order("TEST".to_string(), TradeSide::Long, 100.0, 5);
 
         assert!(order.validate().is_ok());
     }
 
     #[test]
     fn test_order_validation_empty_token() {
-        let order = TradeOrder::market_order(
-            "".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-        );
+        let order = TradeOrder::market_order("".to_string(), TradeSide::Long, 100.0, 5);
 
         assert!(order.validate().is_err());
     }
 
     #[test]
     fn test_order_validation_zero_size() {
-        let order = TradeOrder::market_order(
-            "TEST".to_string(),
-            TradeSide::Long,
-            0.0,
-            5,
-        );
+        let order = TradeOrder::market_order("TEST".to_string(), TradeSide::Long, 0.0, 5);
 
         assert!(order.validate().is_err());
     }
 
     #[test]
     fn test_order_validation_negative_size() {
-        let order = TradeOrder::market_order(
-            "TEST".to_string(),
-            TradeSide::Long,
-            -100.0,
-            5,
-        );
+        let order = TradeOrder::market_order("TEST".to_string(), TradeSide::Long, -100.0, 5);
 
         assert!(order.validate().is_err());
     }
 
     #[test]
     fn test_order_validation_zero_leverage() {
-        let order = TradeOrder::market_order(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            0,
-        );
+        let order = TradeOrder::market_order("TEST".to_string(), TradeSide::Long, 100.0, 0);
 
         assert!(order.validate().is_err());
     }
 
     #[test]
     fn test_order_validation_excessive_leverage() {
-        let order = TradeOrder::market_order(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            150,
-        );
+        let order = TradeOrder::market_order("TEST".to_string(), TradeSide::Long, 100.0, 150);
 
         assert!(order.validate().is_err());
     }
 
     #[test]
     fn test_limit_order_validation_no_price() {
-        let mut order = TradeOrder::limit_order(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.001,
-        );
+        let mut order =
+            TradeOrder::limit_order("TEST".to_string(), TradeSide::Long, 100.0, 5, 0.001);
         order.price = None;
 
         assert!(order.validate().is_err());
@@ -522,26 +468,15 @@ mod tests {
 
     #[test]
     fn test_limit_order_validation_negative_price() {
-        let order = TradeOrder::limit_order(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            -0.001,
-        );
+        let order = TradeOrder::limit_order("TEST".to_string(), TradeSide::Long, 100.0, 5, -0.001);
 
         assert!(order.validate().is_err());
     }
 
     #[test]
     fn test_stop_order_validation_no_stop_price() {
-        let mut order = TradeOrder::stop_loss_order(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.0008,
-        );
+        let mut order =
+            TradeOrder::stop_loss_order("TEST".to_string(), TradeSide::Long, 100.0, 5, 0.0008);
         order.stop_price = None;
 
         assert!(order.validate().is_err());
@@ -549,12 +484,7 @@ mod tests {
 
     #[test]
     fn test_order_expiration() {
-        let mut order = TradeOrder::market_order(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-        );
+        let mut order = TradeOrder::market_order("TEST".to_string(), TradeSide::Long, 100.0, 5);
 
         // Fresh order should not be expired
         assert!(!order.is_expired());
@@ -568,12 +498,7 @@ mod tests {
 
     #[test]
     fn test_execution_result_success() {
-        let result = ExecutionResult::success(
-            "tx123".to_string(),
-            0.001,
-            100.0,
-            0.5,
-        );
+        let result = ExecutionResult::success("tx123".to_string(), 0.001, 100.0, 0.5);
 
         assert!(result.success);
         assert_eq!(result.transaction_id, Some("tx123".to_string()));
@@ -629,12 +554,7 @@ mod tests {
     #[test]
     fn test_trading_stats_update_successful_trade() {
         let mut stats = TradingStats::default();
-        let result = ExecutionResult::success(
-            "tx123".to_string(),
-            0.001,
-            100.0,
-            0.5,
-        );
+        let result = ExecutionResult::success("tx123".to_string(), 0.001, 100.0, 0.5);
 
         stats.update_for_trade(&result, 50.0, 25.0); // 50ms execution, $25 profit
 

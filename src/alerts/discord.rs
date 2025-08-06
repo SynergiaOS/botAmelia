@@ -1,9 +1,9 @@
 use anyhow::Result;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
 
-use crate::monitoring::SystemAlert;
 use super::AlertSenderTrait;
+use crate::monitoring::SystemAlert;
 
 /// Discord alert sender
 pub struct DiscordSender {
@@ -14,7 +14,7 @@ pub struct DiscordSender {
 impl DiscordSender {
     pub fn new(webhook_url: Option<String>) -> Self {
         let enabled = webhook_url.is_some();
-        
+
         Self {
             webhook_url,
             enabled,

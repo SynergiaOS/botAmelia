@@ -1,20 +1,19 @@
+pub mod alerts;
+pub mod api;
+pub mod cache;
 /// Cerberus v5.0 Trading System Library
-/// 
+///
 /// This library provides all the core functionality for the Cerberus trading system,
 /// including signal processing, risk management, trading execution, and monitoring.
-
 // Core modules
 pub mod config;
 pub mod database;
-pub mod signals;
-pub mod risk;
-pub mod trading;
-pub mod cache;
-pub mod security;
-pub mod monitoring;
-pub mod alerts;
 pub mod errors;
-pub mod api;
+pub mod monitoring;
+pub mod risk;
+pub mod security;
+pub mod signals;
+pub mod trading;
 
 // Re-export commonly used types
 pub use config::Config;
@@ -25,7 +24,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const NAME: &str = env!("CARGO_PKG_NAME");
 
 /// Initialize the Cerberus library
-/// 
+///
 /// This function should be called once at the start of the application
 /// to set up logging, error handling, and other global state.
 pub fn init() -> CerberusResult<()> {
@@ -33,9 +32,9 @@ pub fn init() -> CerberusResult<()> {
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "info");
     }
-    
+
     env_logger::try_init().ok(); // Ignore error if already initialized
-    
+
     log::info!("Cerberus v{} initialized", VERSION);
     Ok(())
 }
@@ -45,20 +44,24 @@ pub fn init_with_config(config: &Config) -> CerberusResult<()> {
     // Set log level based on environment
     let log_level = match config.environment.as_str() {
         "development" => "debug",
-        "test" => "debug", 
+        "test" => "debug",
         "staging" => "info",
         "production" => "warn",
         _ => "info",
     };
-    
+
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", log_level);
     }
-    
+
     env_logger::try_init().ok();
-    
-    log::info!("Cerberus v{} initialized with {} environment", VERSION, config.environment);
-    
+
+    log::info!(
+        "Cerberus v{} initialized with {} environment",
+        VERSION,
+        config.environment
+    );
+
     // Initialize Sentry if configured
     let sentry_config = &config.sentry;
     if let Some(ref dsn) = sentry_config.dsn {
@@ -74,7 +77,7 @@ pub fn init_with_config(config: &Config) -> CerberusResult<()> {
 
         log::info!("Sentry monitoring initialized");
     }
-    
+
     Ok(())
 }
 
@@ -93,9 +96,7 @@ pub fn is_paper_trading() -> bool {
 
 /// Check if running in test environment
 pub fn is_test_environment() -> bool {
-    std::env::var("CERBERUS_ENVIRONMENT")
-        .unwrap_or_default()
-        == "test"
+    std::env::var("CERBERUS_ENVIRONMENT").unwrap_or_default() == "test"
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use cerberus::config::AlertsConfig;
 async fn test_alert_manager_creation() {
     let config = AlertsConfig::default();
     let manager = AlertManager::new(config);
-    
+
     // Test that manager was created successfully
     assert!(true); // Basic test that manager can be created
 }
@@ -24,7 +24,7 @@ fn test_alert_sender_creation() {
 #[test]
 fn test_rate_limiter_creation() {
     let rate_limiter = RateLimiter::new(60); // 60 seconds
-    
+
     // Test that rate limiter was created successfully
     assert!(true); // Basic test that rate limiter can be created
 }

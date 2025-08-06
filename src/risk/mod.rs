@@ -1,7 +1,7 @@
+use crate::signals::Signal;
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use anyhow::Result;
-use crate::signals::Signal;
 
 /// Moduł zarządzania ryzykiem z integracją Sentry
 // pub mod manager;
@@ -17,22 +17,22 @@ use crate::signals::Signal;
 pub struct Portfolio {
     /// Aktualny balans (w USD)
     pub balance: f64,
-    
+
     /// Equity (balans + unrealized PnL)
     pub equity: f64,
-    
+
     /// Używana marża
     pub margin_used: f64,
-    
+
     /// Dostępna marża
     pub margin_available: f64,
-    
+
     /// Dzienny P&L
     pub daily_pnl: f64,
-    
+
     /// Otwarte pozycje
     pub open_positions: Vec<Position>,
-    
+
     /// Ostatnia aktualizacja
     pub last_updated: i64,
 }
@@ -42,37 +42,37 @@ pub struct Portfolio {
 pub struct Position {
     /// Identyfikator pozycji
     pub id: String,
-    
+
     /// Token/symbol
     pub token: String,
-    
+
     /// Strona transakcji (Long/Short)
     pub side: TradeSide,
-    
+
     /// Rozmiar pozycji
     pub size: f64,
-    
+
     /// Dźwignia
     pub leverage: u8,
-    
+
     /// Cena wejścia
     pub entry_price: f64,
-    
+
     /// Aktualna cena
     pub current_price: f64,
-    
+
     /// P&L (realized + unrealized)
     pub pnl: f64,
-    
+
     /// Cena likwidacji
     pub liquidation_price: f64,
-    
+
     /// Status pozycji
     pub status: PositionStatus,
-    
+
     /// Czas otwarcia
     pub opened_at: i64,
-    
+
     /// Czas zamknięcia (jeśli zamknięta)
     pub closed_at: Option<i64>,
 }
@@ -98,22 +98,22 @@ pub enum PositionStatus {
 pub struct RiskAssessment {
     /// Czy transakcja jest zatwierdzona
     pub approved: bool,
-    
+
     /// Maksymalna dźwignia
     pub max_leverage: u8,
-    
+
     /// Zalecany rozmiar pozycji
     pub position_size: f64,
-    
+
     /// Uzasadnienie decyzji
     pub reasoning: String,
-    
+
     /// Poziom ryzyka (0-100)
     pub risk_score: u8,
-    
+
     /// Ostrzeżenia
     pub warnings: Vec<String>,
-    
+
     /// Czas oceny
     pub assessed_at: i64,
 }
@@ -123,16 +123,16 @@ pub struct RiskAssessment {
 pub trait RiskManagerTrait: Send + Sync {
     /// Ocenia ryzyko dla sygnału
     async fn evaluate_risk(&self, signal: &Signal, portfolio: &Portfolio) -> RiskAssessment;
-    
+
     /// Sprawdza limity pozycji
     async fn check_position_limits(&self, new_position: &Position) -> bool;
-    
+
     /// Oblicza rozmiar pozycji
     async fn calculate_position_size(&self, signal: &Signal, leverage: u8) -> f64;
-    
+
     /// Sprawdza czy można otworzyć nową pozycję
     async fn can_open_position(&self, portfolio: &Portfolio) -> bool;
-    
+
     /// Sprawdza czy pozycja wymaga zamknięcia
     async fn should_close_position(&self, position: &Position) -> bool;
 }
@@ -150,34 +150,34 @@ impl Portfolio {
             last_updated: chrono::Utc::now().timestamp(),
         }
     }
-    
+
     /// Aktualizuje portfel
     pub fn update(&mut self) {
         // Obliczenie unrealized PnL
-        let unrealized_pnl: f64 = self.open_positions.iter()
-            .map(|pos| pos.pnl)
-            .sum();
-        
+        let unrealized_pnl: f64 = self.open_positions.iter().map(|pos| pos.pnl).sum();
+
         // Aktualizacja equity
         self.equity = self.balance + unrealized_pnl;
-        
+
         // Obliczenie używanej marży
-        self.margin_used = self.open_positions.iter()
+        self.margin_used = self
+            .open_positions
+            .iter()
             .map(|pos| pos.size / pos.leverage as f64)
             .sum();
-        
+
         // Aktualizacja dostępnej marży
         self.margin_available = self.equity - self.margin_used;
-        
+
         self.last_updated = chrono::Utc::now().timestamp();
     }
-    
+
     /// Dodaje pozycję do portfela
     pub fn add_position(&mut self, position: Position) {
         self.open_positions.push(position);
         self.update();
     }
-    
+
     /// Usuwa pozycję z portfela
     pub fn remove_position(&mut self, position_id: &str) -> Option<Position> {
         if let Some(index) = self.open_positions.iter().position(|p| p.id == position_id) {
@@ -188,22 +188,22 @@ impl Portfolio {
             None
         }
     }
-    
+
     /// Zwraca pozycję według ID
     pub fn get_position(&self, position_id: &str) -> Option<&Position> {
         self.open_positions.iter().find(|p| p.id == position_id)
     }
-    
+
     /// Zwraca pozycję według ID (mutable)
     pub fn get_position_mut(&mut self, position_id: &str) -> Option<&mut Position> {
         self.open_positions.iter_mut().find(|p| p.id == position_id)
     }
-    
+
     /// Sprawdza czy portfel jest w dobrej kondycji
     pub fn is_healthy(&self) -> bool {
         self.equity > 0.0 && self.margin_available >= 0.0
     }
-    
+
     /// Zwraca współczynnik wykorzystania marży
     pub fn margin_utilization(&self) -> f64 {
         if self.equity <= 0.0 {
@@ -215,15 +215,9 @@ impl Portfolio {
 
 impl Position {
     /// Tworzy nową pozycję
-    pub fn new(
-        token: String,
-        side: TradeSide,
-        size: f64,
-        leverage: u8,
-        entry_price: f64,
-    ) -> Self {
+    pub fn new(token: String, side: TradeSide, size: f64, leverage: u8, entry_price: f64) -> Self {
         let liquidation_price = Self::calculate_liquidation_price(&side, entry_price, leverage);
-        
+
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             token,
@@ -239,52 +233,54 @@ impl Position {
             closed_at: None,
         }
     }
-    
+
     /// Aktualizuje pozycję z nową ceną
     pub fn update_price(&mut self, new_price: f64) {
         self.current_price = new_price;
         self.pnl = self.calculate_pnl();
     }
-    
+
     /// Oblicza P&L pozycji
     pub fn calculate_pnl(&self) -> f64 {
         let price_change = match self.side {
             TradeSide::Long => self.current_price - self.entry_price,
             TradeSide::Short => self.entry_price - self.current_price,
         };
-        
+
         (price_change / self.entry_price) * self.size * self.leverage as f64
     }
-    
+
     /// Oblicza cenę likwidacji
     pub fn calculate_liquidation_price(side: &TradeSide, entry_price: f64, leverage: u8) -> f64 {
         let liquidation_threshold = 0.95; // 95% marży
-        
+
         match side {
             TradeSide::Long => entry_price * (1.0 - liquidation_threshold / leverage as f64),
             TradeSide::Short => entry_price * (1.0 + liquidation_threshold / leverage as f64),
         }
     }
-    
+
     /// Sprawdza czy pozycja jest bliska likwidacji
     pub fn is_near_liquidation(&self, buffer_percent: f64) -> bool {
         let buffer = self.entry_price * buffer_percent;
-        
+
         match self.side {
             TradeSide::Long => self.current_price <= self.liquidation_price + buffer,
             TradeSide::Short => self.current_price >= self.liquidation_price - buffer,
         }
     }
-    
+
     /// Zamyka pozycję
     pub fn close(&mut self) {
         self.status = PositionStatus::Closed;
         self.closed_at = Some(chrono::Utc::now().timestamp());
     }
-    
+
     /// Zwraca czas trwania pozycji w sekundach
     pub fn duration_seconds(&self) -> i64 {
-        let end_time = self.closed_at.unwrap_or_else(|| chrono::Utc::now().timestamp());
+        let end_time = self
+            .closed_at
+            .unwrap_or_else(|| chrono::Utc::now().timestamp());
         end_time - self.opened_at
     }
 }
@@ -309,13 +305,7 @@ mod tests {
     #[test]
     fn test_portfolio_add_position() {
         let mut portfolio = Portfolio::new(1000.0);
-        let position = Position::new(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.001,
-        );
+        let position = Position::new("TEST".to_string(), TradeSide::Long, 100.0, 5, 0.001);
 
         portfolio.add_position(position);
 
@@ -327,13 +317,7 @@ mod tests {
     #[test]
     fn test_portfolio_remove_position() {
         let mut portfolio = Portfolio::new(1000.0);
-        let position = Position::new(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.001,
-        );
+        let position = Position::new("TEST".to_string(), TradeSide::Long, 100.0, 5, 0.001);
         let position_id = position.id.clone();
 
         portfolio.add_position(position);
@@ -365,13 +349,7 @@ mod tests {
 
     #[test]
     fn test_position_creation() {
-        let position = Position::new(
-            "BONK".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.001,
-        );
+        let position = Position::new("BONK".to_string(), TradeSide::Long, 100.0, 5, 0.001);
 
         assert_eq!(position.token, "BONK");
         assert_eq!(position.side, TradeSide::Long);
@@ -386,13 +364,7 @@ mod tests {
 
     #[test]
     fn test_position_pnl_calculation_long() {
-        let mut position = Position::new(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.001,
-        );
+        let mut position = Position::new("TEST".to_string(), TradeSide::Long, 100.0, 5, 0.001);
 
         // Price increases by 20%
         position.update_price(0.0012);
@@ -403,13 +375,7 @@ mod tests {
 
     #[test]
     fn test_position_pnl_calculation_short() {
-        let mut position = Position::new(
-            "TEST".to_string(),
-            TradeSide::Short,
-            100.0,
-            5,
-            0.001,
-        );
+        let mut position = Position::new("TEST".to_string(), TradeSide::Short, 100.0, 5, 0.001);
 
         // Price increases by 20% (bad for short)
         position.update_price(0.0012);
@@ -438,13 +404,7 @@ mod tests {
 
     #[test]
     fn test_position_near_liquidation() {
-        let mut position = Position::new(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.001,
-        );
+        let mut position = Position::new("TEST".to_string(), TradeSide::Long, 100.0, 5, 0.001);
 
         // Set price close to liquidation
         position.update_price(0.00082); // Just above liquidation price
@@ -455,13 +415,7 @@ mod tests {
 
     #[test]
     fn test_position_close() {
-        let mut position = Position::new(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.001,
-        );
+        let mut position = Position::new("TEST".to_string(), TradeSide::Long, 100.0, 5, 0.001);
 
         assert_eq!(position.status, PositionStatus::Open);
         assert!(position.closed_at.is_none());
@@ -474,13 +428,7 @@ mod tests {
 
     #[test]
     fn test_position_duration() {
-        let position = Position::new(
-            "TEST".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.001,
-        );
+        let position = Position::new("TEST".to_string(), TradeSide::Long, 100.0, 5, 0.001);
 
         let duration = position.duration_seconds();
         assert!(duration >= 0);
@@ -511,23 +459,13 @@ mod tests {
         let mut portfolio = Portfolio::new(1000.0);
 
         // Add profitable position
-        let mut profitable_position = Position::new(
-            "PROFIT".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.001,
-        );
+        let mut profitable_position =
+            Position::new("PROFIT".to_string(), TradeSide::Long, 100.0, 5, 0.001);
         profitable_position.update_price(0.0012); // +20% price
 
         // Add losing position
-        let mut losing_position = Position::new(
-            "LOSS".to_string(),
-            TradeSide::Long,
-            100.0,
-            5,
-            0.001,
-        );
+        let mut losing_position =
+            Position::new("LOSS".to_string(), TradeSide::Long, 100.0, 5, 0.001);
         losing_position.update_price(0.0008); // -20% price
 
         portfolio.add_position(profitable_position);

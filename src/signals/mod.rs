@@ -13,10 +13,10 @@ use std::collections::HashMap;
 /// Poziom pewności sygnału
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Confidence {
-    Low,      // 5x base leverage
-    Medium,   // 10x base leverage  
-    High,     // 20x base leverage
-    Extreme,  // 30x base leverage
+    Low,     // 5x base leverage
+    Medium,  // 10x base leverage
+    High,    // 20x base leverage
+    Extreme, // 30x base leverage
 }
 
 impl std::fmt::Display for Confidence {
@@ -32,7 +32,7 @@ impl std::fmt::Display for Confidence {
 
 impl std::str::FromStr for Confidence {
     type Err = anyhow::Error;
-    
+
     fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "low" => Ok(Confidence::Low),
@@ -49,28 +49,28 @@ impl std::str::FromStr for Confidence {
 pub struct Signal {
     /// Identyfikator sygnału
     pub id: String,
-    
+
     /// Token/symbol
     pub token: String,
-    
+
     /// Źródło sygnału
     pub source: String,
-    
+
     /// Poziom pewności
     pub confidence: Confidence,
-    
+
     /// Cena w momencie sygnału
     pub price: f64,
-    
+
     /// Wolumen
     pub volume: f64,
-    
+
     /// Timestamp (Unix timestamp)
     pub timestamp: i64,
-    
+
     /// Dodatkowe metadane
     pub metadata: serde_json::Value,
-    
+
     /// Hash sygnału dla cache
     pub hash: Option<String>,
 }
@@ -87,7 +87,7 @@ impl Signal {
     ) -> Self {
         let timestamp = chrono::Utc::now().timestamp();
         let id = uuid::Uuid::new_v4().to_string();
-        
+
         let mut signal = Self {
             id,
             token,
@@ -99,62 +99,62 @@ impl Signal {
             metadata,
             hash: None,
         };
-        
+
         signal.hash = Some(signal.calculate_hash());
         signal
     }
-    
+
     /// Oblicza hash sygnału dla cache
     pub fn calculate_hash(&self) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         self.token.hash(&mut hasher);
         self.source.hash(&mut hasher);
         self.confidence.to_string().hash(&mut hasher);
         ((self.price * 1000.0) as u64).hash(&mut hasher); // Zaokrąglenie do 3 miejsc po przecinku
         ((self.volume * 1000.0) as u64).hash(&mut hasher);
-        
+
         format!("{:x}", hasher.finish())
     }
-    
+
     /// Waliduje sygnał
     pub fn validate(&self) -> Result<()> {
         if self.token.is_empty() {
             return Err(anyhow::anyhow!("Token cannot be empty"));
         }
-        
+
         if self.source.is_empty() {
             return Err(anyhow::anyhow!("Source cannot be empty"));
         }
-        
+
         if self.price <= 0.0 {
             return Err(anyhow::anyhow!("Price must be greater than 0"));
         }
-        
+
         if self.volume < 0.0 {
             return Err(anyhow::anyhow!("Volume cannot be negative"));
         }
-        
+
         if self.timestamp <= 0 {
             return Err(anyhow::anyhow!("Timestamp must be valid"));
         }
-        
+
         // Sprawdzenie czy sygnał nie jest zbyt stary (maksymalnie 1 godzina)
         let now = chrono::Utc::now().timestamp();
         if now - self.timestamp > 3600 {
             return Err(anyhow::anyhow!("Signal is too old"));
         }
-        
+
         Ok(())
     }
-    
+
     /// Zwraca wiek sygnału w sekundach
     pub fn age_seconds(&self) -> i64 {
         chrono::Utc::now().timestamp() - self.timestamp
     }
-    
+
     /// Sprawdza czy sygnał jest świeży (młodszy niż podana liczba sekund)
     pub fn is_fresh(&self, max_age_seconds: i64) -> bool {
         self.age_seconds() <= max_age_seconds
@@ -194,16 +194,16 @@ impl Signal {
 pub trait SignalSource: Send + Sync {
     /// Pobiera sygnały ze źródła
     async fn get_signals(&self) -> Result<Vec<Signal>>;
-    
+
     /// Zwraca nazwę źródła
     fn source_name(&self) -> &str;
-    
+
     /// Sprawdza czy źródło jest połączone
     fn is_connected(&self) -> bool;
-    
+
     /// Inicjalizuje połączenie ze źródłem
     async fn connect(&mut self) -> Result<()>;
-    
+
     /// Zamyka połączenie ze źródłem
     async fn disconnect(&mut self) -> Result<()>;
 }
@@ -213,25 +213,25 @@ pub trait SignalSource: Send + Sync {
 pub struct SignalStats {
     /// Całkowita liczba przetworzonych sygnałów
     pub total_processed: u64,
-    
+
     /// Liczba prawidłowych sygnałów
     pub valid_signals: u64,
-    
+
     /// Liczba nieprawidłowych sygnałów
     pub invalid_signals: u64,
-    
+
     /// Liczba sygnałów z cache
     pub cache_hits: u64,
-    
+
     /// Liczba sygnałów bez cache
     pub cache_misses: u64,
-    
+
     /// Średni czas przetwarzania (w ms)
     pub avg_processing_time: f64,
-    
+
     /// Statystyki według źródeł
     pub by_source: HashMap<String, SourceStats>,
-    
+
     /// Statystyki według poziomów pewności
     pub by_confidence: HashMap<String, u64>,
 }
@@ -241,13 +241,13 @@ pub struct SignalStats {
 pub struct SourceStats {
     /// Liczba sygnałów z tego źródła
     pub count: u64,
-    
+
     /// Liczba błędów
     pub errors: u64,
-    
+
     /// Ostatni czas aktywności
     pub last_activity: i64,
-    
+
     /// Czy źródło jest aktywne
     pub is_active: bool,
 }
@@ -269,49 +269,65 @@ impl Default for SignalStats {
 
 impl SignalStats {
     /// Aktualizuje statystyki po przetworzeniu sygnału
-    pub fn update_for_signal(&mut self, signal: &Signal, processing_time_ms: f64, from_cache: bool) {
+    pub fn update_for_signal(
+        &mut self,
+        signal: &Signal,
+        processing_time_ms: f64,
+        from_cache: bool,
+    ) {
         self.total_processed += 1;
         self.valid_signals += 1;
-        
+
         if from_cache {
             self.cache_hits += 1;
         } else {
             self.cache_misses += 1;
         }
-        
+
         // Aktualizacja średniego czasu przetwarzania
-        self.avg_processing_time = (self.avg_processing_time * (self.total_processed - 1) as f64 + processing_time_ms) / self.total_processed as f64;
-        
+        self.avg_processing_time = (self.avg_processing_time * (self.total_processed - 1) as f64
+            + processing_time_ms)
+            / self.total_processed as f64;
+
         // Aktualizacja statystyk według źródła
-        let source_stats = self.by_source.entry(signal.source.clone()).or_insert_with(|| SourceStats {
-            count: 0,
-            errors: 0,
-            last_activity: signal.timestamp,
-            is_active: true,
-        });
+        let source_stats = self
+            .by_source
+            .entry(signal.source.clone())
+            .or_insert_with(|| SourceStats {
+                count: 0,
+                errors: 0,
+                last_activity: signal.timestamp,
+                is_active: true,
+            });
         source_stats.count += 1;
         source_stats.last_activity = signal.timestamp;
-        
+
         // Aktualizacja statystyk według poziomu pewności
-        *self.by_confidence.entry(signal.confidence.to_string()).or_insert(0) += 1;
+        *self
+            .by_confidence
+            .entry(signal.confidence.to_string())
+            .or_insert(0) += 1;
     }
-    
+
     /// Aktualizuje statystyki po błędzie
     pub fn update_for_error(&mut self, source: Option<&str>) {
         self.total_processed += 1;
         self.invalid_signals += 1;
-        
+
         if let Some(source_name) = source {
-            let source_stats = self.by_source.entry(source_name.to_string()).or_insert_with(|| SourceStats {
-                count: 0,
-                errors: 0,
-                last_activity: chrono::Utc::now().timestamp(),
-                is_active: false,
-            });
+            let source_stats = self
+                .by_source
+                .entry(source_name.to_string())
+                .or_insert_with(|| SourceStats {
+                    count: 0,
+                    errors: 0,
+                    last_activity: chrono::Utc::now().timestamp(),
+                    is_active: false,
+                });
             source_stats.errors += 1;
         }
     }
-    
+
     /// Zwraca współczynnik sukcesu
     pub fn success_rate(&self) -> f64 {
         if self.total_processed == 0 {
@@ -319,7 +335,7 @@ impl SignalStats {
         }
         self.valid_signals as f64 / self.total_processed as f64
     }
-    
+
     /// Zwraca współczynnik trafień cache
     pub fn cache_hit_rate(&self) -> f64 {
         let total_cache_operations = self.cache_hits + self.cache_misses;
@@ -500,7 +516,10 @@ mod tests {
         assert_eq!("low".parse::<Confidence>().unwrap(), Confidence::Low);
         assert_eq!("medium".parse::<Confidence>().unwrap(), Confidence::Medium);
         assert_eq!("high".parse::<Confidence>().unwrap(), Confidence::High);
-        assert_eq!("extreme".parse::<Confidence>().unwrap(), Confidence::Extreme);
+        assert_eq!(
+            "extreme".parse::<Confidence>().unwrap(),
+            Confidence::Extreme
+        );
         assert_eq!("HIGH".parse::<Confidence>().unwrap(), Confidence::High); // Case insensitive
 
         assert!("invalid".parse::<Confidence>().is_err());

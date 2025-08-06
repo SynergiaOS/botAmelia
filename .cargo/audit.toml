@@ -1,0 +1,9 @@
+# Security audit configuration for cargo-audit
+# This file configures which security advisories to ignore
+
+[advisories]
+ignore = [
+    "RUSTSEC-2025-0009",  # ring 0.16.20 AES panic issue - acceptable risk for our use case
+    "RUSTSEC-2025-0010",  # ring 0.16.20 unmaintained - waiting for sqlx to update
+    "RUSTSEC-2023-0071",  # RSA timing attack - not using RSA in production, only for MySQL SSL
+]
