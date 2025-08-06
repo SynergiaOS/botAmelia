@@ -1,0 +1,379 @@
+id: cerberus-position-management
+namespace: cerberus.positions
+
+description: |
+  Zarządzanie pozycjami Cerberus - monitorowanie otwartych pozycji,
+  automatyczne zamykanie przy stop-loss/take-profit, zarządzanie ryzykiem.
+
+inputs:
+  - id: action
+    type: STRING
+    defaults: "monitor"
+    description: "Akcja: monitor, close_all, close_losing, rebalance, emergency_close"
+  
+  - id: force_close
+    type: BOOLEAN
+    defaults: false
+    description: "Wymusza zamknięcie pozycji pomimo warunków"
+  
+  - id: max_loss_threshold
+    type: FLOAT
+    defaults: -5.0
+    description: "Próg strat dla automatycznego zamknięcia (USD)"
+
+variables:
+  cerberus_api_base: "http://cerberus:8080"
+  timeout: "PT60S"
+  telegram_bot_token: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+  telegram_chat_id: "{{ secret('TELEGRAM_CHAT_ID') }}"
+
+tasks:
+  # 1. Pobranie aktualnych pozycji
+  - id: fetch-current-positions
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/api/positions"
+    method: GET
+    timeout: "{{ vars.timeout }}"
+    description: "Pobranie listy aktualnych pozycji"
+
+  # 2. Analiza pozycji
+  - id: analyze-positions
+    type: io.kestra.plugin.scripts.python.Script
+    script: |
+      import json
+      from datetime import datetime, timedelta
+      
+      positions_data = {{ outputs['fetch-current-positions'].body.data | tojson }}
+      positions = positions_data.get("positions", [])
+      
+      analysis = {
+          "timestamp": datetime.now().isoformat(),
+          "total_positions": len(positions),
+          "total_value": sum(p.get("size", 0) * p.get("current_price", 0) for p in positions),
+          "total_pnl": sum(p.get("pnl", 0) for p in positions),
+          "positions_by_status": {},
+          "risk_positions": [],
+          "profitable_positions": [],
+          "losing_positions": [],
+          "recommendations": []
+      }
+      
+      # Analiza każdej pozycji
+      for position in positions:
+          pos_id = position.get("id", "unknown")
+          token = position.get("token", "unknown")
+          pnl = position.get("pnl", 0)
+          pnl_percentage = position.get("pnl_percentage", 0)
+          liquidation_price = position.get("liquidation_price", 0)
+          current_price = position.get("current_price", 0)
+          status = position.get("status", "unknown")
+          
+          # Kategoryzacja pozycji
+          if status not in analysis["positions_by_status"]:
+              analysis["positions_by_status"][status] = 0
+          analysis["positions_by_status"][status] += 1
+          
+          # Identyfikacja pozycji ryzykownych
+          if liquidation_price > 0 and current_price > 0:
+              distance_to_liquidation = abs(current_price - liquidation_price) / current_price
+              if distance_to_liquidation < 0.05:  # Mniej niż 5% do likwidacji
+                  analysis["risk_positions"].append({
+                      "id": pos_id,
+                      "token": token,
+                      "distance_to_liquidation": distance_to_liquidation,
+                      "current_price": current_price,
+                      "liquidation_price": liquidation_price,
+                      "reason": "close_to_liquidation"
+                  })
+          
+          # Pozycje zyskowne vs stratne
+          if pnl > 0:
+              analysis["profitable_positions"].append({
+                  "id": pos_id,
+                  "token": token,
+                  "pnl": pnl,
+                  "pnl_percentage": pnl_percentage
+              })
+          elif pnl < {{ inputs.max_loss_threshold }}:
+              analysis["losing_positions"].append({
+                  "id": pos_id,
+                  "token": token,
+                  "pnl": pnl,
+                  "pnl_percentage": pnl_percentage,
+                  "reason": "exceeds_loss_threshold"
+              })
+          
+          # Pozycje otwarte zbyt długo (powyżej 24h)
+          opened_at = position.get("opened_at", 0)
+          if opened_at > 0:
+              hours_open = (datetime.now().timestamp() - opened_at) / 3600
+              if hours_open > 24:
+                  analysis["risk_positions"].append({
+                      "id": pos_id,
+                      "token": token,
+                      "hours_open": hours_open,
+                      "reason": "open_too_long"
+                  })
+      
+      # Generowanie rekomendacji
+      if analysis["total_pnl"] < -10:
+          analysis["recommendations"].append("Rozważ zamknięcie stratnych pozycji - łączne straty przekraczają $10")
+      
+      if len(analysis["risk_positions"]) > 0:
+          analysis["recommendations"].append(f"UWAGA: {len(analysis['risk_positions'])} pozycji wymaga natychmiastowej uwagi")
+      
+      if analysis["total_positions"] > 3:
+          analysis["recommendations"].append("Za dużo otwartych pozycji - rozważ zamknięcie niektórych")
+      
+      if len(analysis["losing_positions"]) > len(analysis["profitable_positions"]):
+          analysis["recommendations"].append("Więcej pozycji stratnych niż zyskownych - przeanalizuj strategię")
+      
+      print(json.dumps(analysis, indent=2))
+
+  # 3. Wykonanie akcji na podstawie parametru wejściowego
+  - id: execute-action
+    type: io.kestra.plugin.core.flow.Switch
+    value: "{{ inputs.action }}"
+    cases:
+      monitor:
+        - id: log-monitoring-results
+          type: io.kestra.plugin.core.log.Log
+          message: |
+            📊 MONITORING POZYCJI:
+            Łączne pozycje: {{ outputs['analyze-positions'].vars.json.total_positions }}
+            Łączna wartość: ${{ outputs['analyze-positions'].vars.json.total_value }}
+            Łączny P&L: ${{ outputs['analyze-positions'].vars.json.total_pnl }}
+            Pozycje ryzykowne: {{ outputs['analyze-positions'].vars.json.risk_positions | length }}
+            Pozycje zyskowne: {{ outputs['analyze-positions'].vars.json.profitable_positions | length }}
+            Pozycje stratne: {{ outputs['analyze-positions'].vars.json.losing_positions | length }}
+          level: INFO
+
+      close_all:
+        - id: confirm-close-all
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ inputs.force_close == true or outputs['analyze-positions'].vars.json.total_positions <= 3 }}"
+          then:
+            - id: notify-close-all-start
+              type: io.kestra.plugin.core.http.Request
+              uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "chat_id": "{{ vars.telegram_chat_id }}",
+                  "text": "🔴 *ZAMYKANIE WSZYSTKICH POZYCJI*\n\nLiczba pozycji: {{ outputs['analyze-positions'].vars.json.total_positions }}\nWymuszony: {{ inputs.force_close }}\n\nRozpoczynanie zamykania...",
+                  "parse_mode": "Markdown"
+                }
+              allowFailed: true
+            
+            - id: close-all-positions
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ vars.cerberus_api_base }}/api/positions/close-all"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "force": {{ inputs.force_close }},
+                  "reason": "Kestra position management - close all"
+                }
+              timeout: "PT120S"
+            
+            - id: verify-close-all
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ vars.cerberus_api_base }}/api/positions"
+              method: GET
+              timeout: "{{ vars.timeout }}"
+            
+            - id: notify-close-all-result
+              type: io.kestra.plugin.core.http.Request
+              uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "chat_id": "{{ vars.telegram_chat_id }}",
+                  "text": "✅ *ZAMKNIĘCIE POZYCJI ZAKOŃCZONE*\n\nPozycje przed: {{ outputs['analyze-positions'].vars.json.total_positions }}\nPozycje po: {{ outputs['verify-close-all'].body.data.total_positions }}\nStatus: {{ outputs['close-all-positions'].body.data.status }}",
+                  "parse_mode": "Markdown"
+                }
+              allowFailed: true
+          else:
+            - id: close-all-rejected
+              type: io.kestra.plugin.core.log.Log
+              message: "❌ Zamknięcie wszystkich pozycji odrzucone - za dużo pozycji bez force_close"
+              level: WARN
+
+      close_losing:
+        - id: close-losing-positions
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ outputs['analyze-positions'].vars.json.losing_positions | length > 0 }}"
+          then:
+            - id: notify-close-losing-start
+              type: io.kestra.plugin.core.http.Request
+              uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "chat_id": "{{ vars.telegram_chat_id }}",
+                  "text": "📉 *ZAMYKANIE STRATNYCH POZYCJI*\n\nLiczba pozycji: {{ outputs['analyze-positions'].vars.json.losing_positions | length }}\nPróg strat: ${{ inputs.max_loss_threshold }}\n\nRozpoczynanie...",
+                  "parse_mode": "Markdown"
+                }
+              allowFailed: true
+            
+            - id: execute-close-losing
+              type: io.kestra.plugin.scripts.python.Script
+              script: |
+                import json
+                import requests
+                
+                losing_positions = {{ outputs['analyze-positions'].vars.json.losing_positions | tojson }}
+                api_base = "{{ vars.cerberus_api_base }}"
+                
+                results = []
+                for position in losing_positions:
+                    pos_id = position["id"]
+                    try:
+                        response = requests.post(
+                            f"{api_base}/api/positions/{pos_id}/close",
+                            json={"reason": "Automatic close - loss threshold exceeded"},
+                            timeout=30
+                        )
+                        results.append({
+                            "position_id": pos_id,
+                            "token": position["token"],
+                            "pnl": position["pnl"],
+                            "success": response.status_code == 200,
+                            "response": response.json() if response.status_code == 200 else str(response.status_code)
+                        })
+                    except Exception as e:
+                        results.append({
+                            "position_id": pos_id,
+                            "token": position["token"],
+                            "pnl": position["pnl"],
+                            "success": False,
+                            "error": str(e)
+                        })
+                
+                print(json.dumps({"closed_positions": results}, indent=2))
+            
+            - id: notify-close-losing-result
+              type: io.kestra.plugin.core.http.Request
+              uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "chat_id": "{{ vars.telegram_chat_id }}",
+                  "text": "📉 *ZAMKNIĘCIE STRATNYCH POZYCJI*\n\nPrzetworzono: {{ outputs['execute-close-losing'].vars.json.closed_positions | length }}\nUdane: {{ outputs['execute-close-losing'].vars.json.closed_positions | selectattr('success', 'equalto', true) | list | length }}\nNieudane: {{ outputs['execute-close-losing'].vars.json.closed_positions | selectattr('success', 'equalto', false) | list | length }}",
+                  "parse_mode": "Markdown"
+                }
+              allowFailed: true
+          else:
+            - id: no-losing-positions
+              type: io.kestra.plugin.core.log.Log
+              message: "✅ Brak stratnych pozycji do zamknięcia"
+              level: INFO
+
+      emergency_close:
+        - id: emergency-close-all
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+          method: POST
+          contentType: "application/json"
+          body: |
+            {
+              "chat_id": "{{ vars.telegram_chat_id }}",
+              "text": "🚨 *EMERGENCY CLOSE AKTYWOWANY*\n\nWszystkie pozycje zostaną natychmiast zamknięte!\nCzas: {{ now() | date('yyyy-MM-dd HH:mm') }}",
+              "parse_mode": "Markdown"
+            }
+          allowFailed: true
+        
+        - id: execute-emergency-close
+          type: io.kestra.plugin.core.http.Request
+          uri: "{{ vars.cerberus_api_base }}/api/system/emergency-stop"
+          method: POST
+          timeout: "PT120S"
+          description: "Wykonanie emergency close wszystkich pozycji"
+
+    defaults:
+      - id: unknown-action
+        type: io.kestra.plugin.core.log.Log
+        message: "❌ Nieznana akcja: {{ inputs.action }}"
+        level: ERROR
+
+  # 4. Sprawdzenie pozycji ryzykownych
+  - id: check-risk-positions
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs['analyze-positions'].vars.json.risk_positions | length > 0 }}"
+    then:
+      - id: alert-risk-positions
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+        method: POST
+        contentType: "application/json"
+        body: |
+          {
+            "chat_id": "{{ vars.telegram_chat_id }}",
+            "text": "⚠️ *POZYCJE RYZYKOWNE WYKRYTE*\n\nLiczba: {{ outputs['analyze-positions'].vars.json.risk_positions | length }}\n\nSprawdź pozycje wymagające uwagi!",
+            "parse_mode": "Markdown"
+          }
+        allowFailed: true
+
+  # 5. Podsumowanie zarządzania pozycjami
+  - id: position-management-summary
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      📊 PODSUMOWANIE ZARZĄDZANIA POZYCJAMI:
+      Akcja: {{ inputs.action }}
+      Pozycje łącznie: {{ outputs['analyze-positions'].vars.json.total_positions }}
+      Wartość łączna: ${{ outputs['analyze-positions'].vars.json.total_value }}
+      P&L łączny: ${{ outputs['analyze-positions'].vars.json.total_pnl }}
+      Pozycje ryzykowne: {{ outputs['analyze-positions'].vars.json.risk_positions | length }}
+      Rekomendacje: {{ outputs['analyze-positions'].vars.json.recommendations | length }}
+    level: INFO
+
+errors:
+  - id: position-management-error
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      💥 BŁĄD ZARZĄDZANIA POZYCJAMI:
+      Akcja: {{ inputs.action }}
+      Task: {{ error.taskId }}
+      Error: {{ error.message }}
+    level: ERROR
+  
+  - id: notify-error
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+    method: POST
+    contentType: "application/json"
+    body: |
+      {
+        "chat_id": "{{ vars.telegram_chat_id }}",
+        "text": "💥 *BŁĄD ZARZĄDZANIA POZYCJAMI*\n\nAkcja: {{ inputs.action }}\nBłąd: {{ error.message }}\nCzas: {{ now() | date('yyyy-MM-dd HH:mm') }}",
+        "parse_mode": "Markdown"
+      }
+    allowFailed: true
+
+triggers:
+  # Monitoring pozycji co 5 minut
+  - id: position-monitoring
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/5 * * * *"
+    timezone: "Europe/Warsaw"
+    disabled: false
+    inputs:
+      action: "monitor"
+      force_close: false
+      max_loss_threshold: -5.0
+
+  # Automatyczne zamykanie stratnych pozycji co 15 minut
+  - id: auto-close-losing
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/15 * * * *"
+    timezone: "Europe/Warsaw"
+    disabled: true  # Włącz gdy będzie potrzebne
+    inputs:
+      action: "close_losing"
+      force_close: false
+      max_loss_threshold: -8.0

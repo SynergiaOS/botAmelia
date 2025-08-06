@@ -1,0 +1,417 @@
+id: cerberus-advanced-alerting
+namespace: cerberus.alerting
+
+description: |
+  Zaawansowany system alertów Cerberus - inteligentne wykrywanie anomalii,
+  eskalacja alertów i zarządzanie powiadomieniami z rate limiting.
+
+inputs:
+  - id: alert_severity
+    type: STRING
+    defaults: "auto"
+    description: "Poziom alertu: auto, info, warning, critical, emergency"
+  
+  - id: check_anomalies
+    type: BOOLEAN
+    defaults: true
+    description: "Czy sprawdzać anomalie w danych"
+  
+  - id: send_notifications
+    type: BOOLEAN
+    defaults: true
+    description: "Czy wysyłać powiadomienia"
+
+variables:
+  cerberus_api_base: "http://cerberus:8080"
+  timeout: "PT30S"
+  telegram_bot_token: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+  telegram_chat_id: "{{ secret('TELEGRAM_CHAT_ID') }}"
+  discord_webhook: "{{ secret('DISCORD_WEBHOOK_URL') }}"
+  slack_webhook: "{{ secret('SLACK_WEBHOOK_URL') }}"
+
+tasks:
+  # 1. Pobranie aktualnych metryk
+  - id: fetch-current-metrics
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/health/detailed"
+    method: GET
+    timeout: "{{ vars.timeout }}"
+    description: "Pobranie aktualnych metryk systemu"
+
+  # 2. Pobranie historycznych danych dla porównania
+  - id: fetch-historical-metrics
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/api/metrics/history"
+    method: GET
+    timeout: "{{ vars.timeout }}"
+    headers:
+      Content-Type: "application/json"
+    body: |
+      {
+        "period": "1h",
+        "metrics": ["cpu_usage", "memory_usage", "success_rate", "daily_pnl", "decision_time"]
+      }
+    allowFailed: true
+    description: "Pobranie danych historycznych do analizy trendów"
+
+  # 3. Analiza anomalii i generowanie alertów
+  - id: analyze-anomalies
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.check_anomalies == true }}"
+    then:
+      - id: anomaly-detection
+        type: io.kestra.plugin.scripts.python.Script
+        beforeCommands:
+          - pip install numpy pandas scipy
+        script: |
+          import json
+          import numpy as np
+          from datetime import datetime, timedelta
+          
+          # Pobranie danych
+          current_data = {{ outputs['fetch-current-metrics'].body.data | tojson }}
+          historical_data = {{ outputs['fetch-historical-metrics'].body.data | tojson if outputs['fetch-historical-metrics'].body else '{}' | tojson }}
+          
+          alerts = []
+          anomalies = []
+          severity = "{{ inputs.alert_severity }}"
+          
+          # Funkcja do wykrywania anomalii
+          def detect_anomaly(current_value, historical_values, threshold_std=2):
+              if not historical_values or len(historical_values) < 3:
+                  return False, 0
+              
+              mean_val = np.mean(historical_values)
+              std_val = np.std(historical_values)
+              
+              if std_val == 0:
+                  return False, 0
+              
+              z_score = abs((current_value - mean_val) / std_val)
+              return z_score > threshold_std, z_score
+          
+          # Sprawdzenie CPU
+          cpu_current = current_data.get("system", {}).get("cpu_usage_percent", 0)
+          cpu_historical = historical_data.get("cpu_usage", [])
+          cpu_anomaly, cpu_z = detect_anomaly(cpu_current, cpu_historical)
+          
+          if cpu_current > 90:
+              alerts.append({
+                  "type": "critical_cpu",
+                  "message": f"Krytyczne użycie CPU: {cpu_current:.1f}%",
+                  "severity": "critical",
+                  "value": cpu_current,
+                  "threshold": 90
+              })
+          elif cpu_current > 80:
+              alerts.append({
+                  "type": "high_cpu",
+                  "message": f"Wysokie użycie CPU: {cpu_current:.1f}%",
+                  "severity": "warning",
+                  "value": cpu_current,
+                  "threshold": 80
+              })
+          
+          if cpu_anomaly:
+              anomalies.append({
+                  "type": "cpu_anomaly",
+                  "message": f"Anomalia CPU: {cpu_current:.1f}% (Z-score: {cpu_z:.2f})",
+                  "severity": "warning",
+                  "z_score": cpu_z
+              })
+          
+          # Sprawdzenie pamięci
+          memory_current = current_data.get("system", {}).get("memory_usage_mb", 0)
+          memory_historical = historical_data.get("memory_usage", [])
+          memory_anomaly, memory_z = detect_anomaly(memory_current, memory_historical)
+          
+          if memory_current > 1024:
+              alerts.append({
+                  "type": "critical_memory",
+                  "message": f"Krytyczne użycie pamięci: {memory_current:.0f}MB",
+                  "severity": "critical",
+                  "value": memory_current,
+                  "threshold": 1024
+              })
+          elif memory_current > 512:
+              alerts.append({
+                  "type": "high_memory",
+                  "message": f"Wysokie użycie pamięci: {memory_current:.0f}MB",
+                  "severity": "warning",
+                  "value": memory_current,
+                  "threshold": 512
+              })
+          
+          if memory_anomaly:
+              anomalies.append({
+                  "type": "memory_anomaly",
+                  "message": f"Anomalia pamięci: {memory_current:.0f}MB (Z-score: {memory_z:.2f})",
+                  "severity": "warning",
+                  "z_score": memory_z
+              })
+          
+          # Sprawdzenie success rate
+          success_rate = current_data.get("trading", {}).get("success_rate", 1.0)
+          success_historical = historical_data.get("success_rate", [])
+          success_anomaly, success_z = detect_anomaly(success_rate, success_historical)
+          
+          if success_rate < 0.3:
+              alerts.append({
+                  "type": "critical_success_rate",
+                  "message": f"Krytycznie niski success rate: {success_rate:.1%}",
+                  "severity": "critical",
+                  "value": success_rate,
+                  "threshold": 0.3
+              })
+          elif success_rate < 0.5:
+              alerts.append({
+                  "type": "low_success_rate",
+                  "message": f"Niski success rate: {success_rate:.1%}",
+                  "severity": "warning",
+                  "value": success_rate,
+                  "threshold": 0.5
+              })
+          
+          if success_anomaly and success_rate < np.mean(success_historical) * 0.8:
+              anomalies.append({
+                  "type": "success_rate_anomaly",
+                  "message": f"Anomalia success rate: {success_rate:.1%} (Z-score: {success_z:.2f})",
+                  "severity": "warning",
+                  "z_score": success_z
+              })
+          
+          # Sprawdzenie P&L
+          daily_pnl = current_data.get("trading", {}).get("daily_pnl", 0)
+          pnl_historical = historical_data.get("daily_pnl", [])
+          pnl_anomaly, pnl_z = detect_anomaly(daily_pnl, pnl_historical)
+          
+          if daily_pnl < -15:
+              alerts.append({
+                  "type": "critical_losses",
+                  "message": f"Krytyczne straty: ${daily_pnl:.2f}",
+                  "severity": "critical",
+                  "value": daily_pnl,
+                  "threshold": -15
+              })
+          elif daily_pnl < -10:
+              alerts.append({
+                  "type": "high_losses",
+                  "message": f"Wysokie straty: ${daily_pnl:.2f}",
+                  "severity": "warning",
+                  "value": daily_pnl,
+                  "threshold": -10
+              })
+          
+          if pnl_anomaly and daily_pnl < 0:
+              anomalies.append({
+                  "type": "pnl_anomaly",
+                  "message": f"Anomalia P&L: ${daily_pnl:.2f} (Z-score: {pnl_z:.2f})",
+                  "severity": "warning",
+                  "z_score": pnl_z
+              })
+          
+          # Sprawdzenie czasu decyzji
+          avg_decision_time = current_data.get("performance", {}).get("avg_decision_time_ms", 0)
+          decision_historical = historical_data.get("decision_time", [])
+          decision_anomaly, decision_z = detect_anomaly(avg_decision_time, decision_historical)
+          
+          if avg_decision_time > 1000:
+              alerts.append({
+                  "type": "slow_decisions",
+                  "message": f"Wolne decyzje: {avg_decision_time:.1f}ms",
+                  "severity": "warning",
+                  "value": avg_decision_time,
+                  "threshold": 1000
+              })
+          
+          if decision_anomaly and avg_decision_time > np.mean(decision_historical) * 2:
+              anomalies.append({
+                  "type": "decision_time_anomaly",
+                  "message": f"Anomalia czasu decyzji: {avg_decision_time:.1f}ms (Z-score: {decision_z:.2f})",
+                  "severity": "info",
+                  "z_score": decision_z
+              })
+          
+          # Określenie ogólnego poziomu alertu
+          if severity == "auto":
+              critical_alerts = [a for a in alerts if a["severity"] == "critical"]
+              warning_alerts = [a for a in alerts if a["severity"] == "warning"]
+              
+              if critical_alerts:
+                  severity = "critical"
+              elif warning_alerts or anomalies:
+                  severity = "warning"
+              else:
+                  severity = "info"
+          
+          result = {
+              "timestamp": datetime.now().isoformat(),
+              "severity": severity,
+              "alerts": alerts,
+              "anomalies": anomalies,
+              "total_alerts": len(alerts),
+              "total_anomalies": len(anomalies),
+              "requires_notification": len(alerts) > 0 or len(anomalies) > 0
+          }
+          
+          print(json.dumps(result, indent=2))
+
+  # 4. Sprawdzenie czy wymagane są powiadomienia
+  - id: check-notification-required
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.send_notifications == true and (outputs['analyze-anomalies']['anomaly-detection'].vars.json.requires_notification == true or inputs.alert_severity != 'auto') }}"
+    then:
+      # Rate limiting - sprawdzenie czy nie wysyłamy za dużo alertów
+      - id: check-rate-limit
+        type: io.kestra.plugin.scripts.python.Script
+        script: |
+          import json
+          from datetime import datetime, timedelta
+          
+          # Symulacja sprawdzenia rate limit (w rzeczywistości byłoby to w Redis/DB)
+          # Dla demonstracji zakładamy, że możemy wysłać alert
+          
+          rate_limit_check = {
+              "can_send": True,
+              "reason": "Rate limit OK",
+              "next_allowed": datetime.now().isoformat(),
+              "alerts_sent_last_hour": 0,
+              "max_alerts_per_hour": 10
+          }
+          
+          print(json.dumps(rate_limit_check))
+      
+      # Wysłanie alertów przez różne kanały
+      - id: send-notifications
+        type: io.kestra.plugin.core.flow.If
+        condition: "{{ outputs['check-rate-limit'].vars.json.can_send == true }}"
+        then:
+          # Telegram notification
+          - id: send-telegram-alert
+            type: io.kestra.plugin.core.http.Request
+            uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+            method: POST
+            contentType: "application/json"
+            body: |
+              {
+                "chat_id": "{{ vars.telegram_chat_id }}",
+                "text": "🚨 *CERBERUS ALERT*\n\n*Severity:* {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.severity }}\n*Alerts:* {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.total_alerts }}\n*Anomalies:* {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.total_anomalies }}\n\n{{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.alerts | map(attribute='message') | join('\n') }}\n\n⏰ {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.timestamp }}",
+                "parse_mode": "Markdown"
+              }
+            allowFailed: true
+            description: "Wysłanie alertu przez Telegram"
+          
+          # Discord notification (jeśli skonfigurowane)
+          - id: send-discord-alert
+            type: io.kestra.plugin.core.flow.If
+            condition: "{{ vars.discord_webhook != '' }}"
+            then:
+              - id: discord-webhook-call
+                type: io.kestra.plugin.core.http.Request
+                uri: "{{ vars.discord_webhook }}"
+                method: POST
+                contentType: "application/json"
+                body: |
+                  {
+                    "embeds": [{
+                      "title": "🚨 Cerberus Alert",
+                      "description": "{{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.alerts | map(attribute='message') | join('\n') }}",
+                      "color": {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.severity == 'critical' and 16711680 or 16776960 }},
+                      "timestamp": "{{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.timestamp }}"
+                    }]
+                  }
+                allowFailed: true
+          
+          # Slack notification (jeśli skonfigurowane)
+          - id: send-slack-alert
+            type: io.kestra.plugin.core.flow.If
+            condition: "{{ vars.slack_webhook != '' }}"
+            then:
+              - id: slack-webhook-call
+                type: io.kestra.plugin.core.http.Request
+                uri: "{{ vars.slack_webhook }}"
+                method: POST
+                contentType: "application/json"
+                body: |
+                  {
+                    "text": "🚨 Cerberus Alert",
+                    "blocks": [
+                      {
+                        "type": "section",
+                        "text": {
+                          "type": "mrkdwn",
+                          "text": "*Severity:* {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.severity }}\n*Alerts:* {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.total_alerts }}\n*Anomalies:* {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.total_anomalies }}"
+                        }
+                      }
+                    ]
+                  }
+                allowFailed: true
+
+  # 5. Logowanie alertów do systemu
+  - id: log-alerts-to-system
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/api/alerts/log"
+    method: POST
+    contentType: "application/json"
+    body: |
+      {
+        "timestamp": "{{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.timestamp }}",
+        "severity": "{{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.severity }}",
+        "alerts": {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.alerts | tojson }},
+        "anomalies": {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.anomalies | tojson }},
+        "source": "kestra-alerting"
+      }
+    allowFailed: true
+    description: "Zapisanie alertów w systemie Cerberus"
+
+  # 6. Podsumowanie alertów
+  - id: alert-summary
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      🚨 PODSUMOWANIE ALERTÓW:
+      Severity: {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.severity }}
+      Alerty: {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.total_alerts }}
+      Anomalie: {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.total_anomalies }}
+      Powiadomienia: {{ outputs['check-notification-required'] is defined }}
+      Czas: {{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.timestamp }}
+    level: "{{ outputs['analyze-anomalies']['anomaly-detection'].vars.json.severity == 'critical' and 'ERROR' or 'WARN' }}"
+
+errors:
+  - id: alerting-error-handler
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      💥 BŁĄD SYSTEMU ALERTÓW:
+      Task: {{ error.taskId }}
+      Error: {{ error.message }}
+    level: ERROR
+  
+  - id: emergency-notification
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+    method: POST
+    contentType: "application/json"
+    body: |
+      {
+        "chat_id": "{{ vars.telegram_chat_id }}",
+        "text": "💥 *BŁĄD SYSTEMU ALERTÓW*\n\nSystem alertów Cerberus napotkał błąd!\nTask: {{ error.taskId }}\nBłąd: {{ error.message }}\n\n⚠️ Sprawdź system manualnie!",
+        "parse_mode": "Markdown"
+      }
+    allowFailed: true
+
+triggers:
+  # Sprawdzanie alertów co minutę
+  - id: continuous-alerting
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "* * * * *"
+    timezone: "Europe/Warsaw"
+    disabled: false
+    inputs:
+      alert_severity: "auto"
+      check_anomalies: true
+      send_notifications: true
+
+  # Webhook trigger dla zewnętrznych alertów
+  - id: external-alert-webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "cerberus-external-alert"
+    disabled: false

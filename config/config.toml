@@ -1,0 +1,162 @@
+# Cerberus v4.0 Configuration File
+# High-Performance Leverage Trading Framework
+
+# Środowisko aplikacji (development, staging, production)
+environment = "development"
+
+# Porty serwera
+http_port = 8080
+metrics_port = 9090
+
+# Konfiguracja bazy danych SQLite
+[database]
+path = "data/cerberus.db"
+max_connections = 10
+connection_timeout = 30
+enable_wal = true
+cache_size = 64000  # 64MB
+enable_foreign_keys = true
+query_timeout = 30
+enable_backup = true
+backup_interval = 60  # co godzinę
+backup_directory = "data/backups"
+
+# Konfiguracja tradingu
+[trading]
+initial_balance = 50.0  # $50 starting balance
+max_leverage = 50
+min_leverage = 2
+max_concurrent_positions = 3
+max_position_size_percent = 0.33  # 33%
+min_position_size = 5.0  # $5
+execution_timeout = 30
+position_check_interval = 5
+paper_trading = true  # Tryb testowy
+
+# Konfiguracja dźwigni dla różnych poziomów pewności
+[trading.leverage_config]
+low_confidence = 5
+medium_confidence = 10
+high_confidence = 20
+extreme_confidence = 30
+
+# Konfiguracja zarządzania ryzykiem
+[risk]
+max_daily_loss = 15.0  # $15
+max_position_loss_percent = 0.10  # 10%
+circuit_breaker_threshold = 15.0  # $15
+max_consecutive_failures = 5
+max_portfolio_volatility = 0.15  # 15%
+liquidation_buffer = 0.02  # 2%
+min_liquidation_distance = 0.05  # 5%
+max_position_duration = 24  # 24 godziny
+enable_auto_risk_management = true
+
+# Konfiguracja stop-loss
+[risk.stop_loss]
+enabled = true
+default_percent = 0.10  # 10%
+use_trailing = false
+trailing_distance = 0.05  # 5%
+
+# Konfiguracja take-profit
+[risk.take_profit]
+enabled = true
+default_percent = 0.20  # 20%
+use_partial = true
+partial_percent = 0.50  # 50%
+first_partial_level = 0.15  # 15%
+
+# Konfiguracja monitorowania
+[monitoring]
+enable_metrics = true
+metrics_interval = 10  # 10 sekund
+max_memory_usage = 256  # 256 MB
+memory_warning_threshold = 200  # 200 MB
+max_query_time = 100  # 100 ms
+query_time_warning = 50  # 50 ms
+health_check_interval = 30  # 30 sekund
+enable_performance_monitoring = true
+enable_system_monitoring = true
+
+# Konfiguracja retencji metryk
+[monitoring.retention]
+high_resolution_days = 7    # 1 tydzień
+medium_resolution_days = 30 # 1 miesiąc
+low_resolution_days = 365   # 1 rok
+enable_auto_cleanup = true
+cleanup_interval = 24       # co 24 godziny
+
+# Konfiguracja eksportu metryk
+[monitoring.export]
+enable_prometheus = true
+prometheus_port = 9090
+prometheus_path = "/metrics"
+enable_influxdb = false
+# influxdb_url = "http://localhost:8086"
+# influxdb_token = "your-token"
+# influxdb_org = "your-org"
+# influxdb_bucket = "cerberus"
+
+# Konfiguracja alertów
+[alerts]
+enabled = true
+rate_limit = 60      # 1 minuta
+group_similar = true
+grouping_window = 300  # 5 minut
+
+# Konfiguracja Telegram
+[alerts.telegram]
+enabled = false
+# bot_token = "your-telegram-bot-token"
+# chat_id = "your-chat-id"
+send_critical = true
+send_high = true
+send_medium = true
+send_low = false
+
+# Konfiguracja Discord
+[alerts.discord]
+enabled = false
+# bot_token = "your-discord-bot-token"
+# channel_id = "your-channel-id"
+send_critical = true
+send_high = true
+send_medium = true
+send_low = false
+
+# Konfiguracja email
+[alerts.email]
+enabled = false
+# smtp_server = "smtp.gmail.com"
+smtp_port = 587
+# smtp_username = "your-email@gmail.com"
+# smtp_password = "your-app-password"
+# from_address = "cerberus@yourdomain.com"
+to_addresses = ["admin@yourdomain.com"]
+use_tls = true
+send_critical = true
+send_high = true
+
+# Poziomy alertów
+[alerts.levels]
+critical_loss_threshold = 15.0  # $15
+high_loss_threshold = 10.0      # $10
+medium_loss_threshold = 5.0     # $5
+memory_threshold = 200          # 200 MB
+response_time_threshold = 1000  # 1 sekunda
+consecutive_errors_threshold = 5
+
+# Konfiguracja Sentry
+[sentry]
+# dsn = "your-sentry-dsn"
+environment = "development"
+# release = "cerberus@4.0.0"
+traces_sample_rate = 1.0
+send_default_pii = false
+debug = true
+
+# Custom tags dla Sentry
+[sentry.tags]
+component = "cerberus"
+version = "4.0.0"

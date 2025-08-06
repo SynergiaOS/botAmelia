@@ -1,0 +1,329 @@
+id: cerberus-monitoring
+namespace: cerberus.monitoring
+
+description: |
+  System monitorowania Cerberus - sprawdza stan systemu, wydajność i wysyła alerty
+  w przypadku problemów lub anomalii.
+
+inputs:
+  - id: alert_threshold_cpu
+    type: FLOAT
+    defaults: 80.0
+    description: "Próg CPU dla alertów (%)"
+  
+  - id: alert_threshold_memory
+    type: FLOAT
+    defaults: 512.0
+    description: "Próg pamięci dla alertów (MB)"
+  
+  - id: alert_threshold_success_rate
+    type: FLOAT
+    defaults: 0.6
+    description: "Minimalny success rate (0.0-1.0)"
+
+variables:
+  cerberus_api_base: "http://cerberus:8080"
+  timeout: "PT30S"
+  telegram_bot_token: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+  telegram_chat_id: "{{ secret('TELEGRAM_CHAT_ID') }}"
+
+tasks:
+  # 1. Sprawdzenie podstawowego stanu systemu
+  - id: basic-health-check
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/health"
+    method: GET
+    timeout: "{{ vars.timeout }}"
+    description: "Podstawowe sprawdzenie stanu systemu"
+
+  # 2. Pobranie szczegółowych metryk
+  - id: detailed-health-check
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/health/detailed"
+    method: GET
+    timeout: "{{ vars.timeout }}"
+    description: "Szczegółowe metryki systemu"
+
+  # 3. Sprawdzenie metryk Prometheus
+  - id: prometheus-metrics
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/metrics/prometheus"
+    method: GET
+    timeout: "{{ vars.timeout }}"
+    description: "Pobranie metryk w formacie Prometheus"
+
+  # 4. Analiza stanu systemu
+  - id: analyze-system-state
+    type: io.kestra.plugin.scripts.python.Script
+    beforeCommands:
+      - pip install requests
+    script: |
+      import json
+      import re
+      from datetime import datetime
+      
+      # Pobranie danych z poprzednich kroków
+      health_data = {{ outputs['detailed-health-check'].body.data | tojson }}
+      prometheus_text = """{{ outputs['prometheus-metrics'].body }}"""
+      
+      # Analiza metryk
+      analysis = {
+          "timestamp": datetime.now().isoformat(),
+          "system_status": "healthy",
+          "alerts": [],
+          "warnings": [],
+          "metrics": {}
+      }
+      
+      # Sprawdzenie CPU
+      cpu_usage = health_data.get("system", {}).get("cpu_usage_percent", 0)
+      analysis["metrics"]["cpu_usage"] = cpu_usage
+      if cpu_usage > {{ inputs.alert_threshold_cpu }}:
+          analysis["alerts"].append({
+              "type": "high_cpu",
+              "message": f"Wysokie użycie CPU: {cpu_usage}%",
+              "severity": "critical" if cpu_usage > 90 else "warning"
+          })
+          analysis["system_status"] = "warning"
+      
+      # Sprawdzenie pamięci
+      memory_usage = health_data.get("system", {}).get("memory_usage_mb", 0)
+      analysis["metrics"]["memory_usage"] = memory_usage
+      if memory_usage > {{ inputs.alert_threshold_memory }}:
+          analysis["alerts"].append({
+              "type": "high_memory",
+              "message": f"Wysokie użycie pamięci: {memory_usage}MB",
+              "severity": "critical" if memory_usage > 1024 else "warning"
+          })
+          analysis["system_status"] = "warning"
+      
+      # Sprawdzenie success rate
+      success_rate = health_data.get("trading", {}).get("success_rate", 1.0)
+      analysis["metrics"]["success_rate"] = success_rate
+      if success_rate < {{ inputs.alert_threshold_success_rate }}:
+          analysis["alerts"].append({
+              "type": "low_success_rate",
+              "message": f"Niski success rate: {success_rate:.2%}",
+              "severity": "warning"
+          })
+          analysis["system_status"] = "warning"
+      
+      # Sprawdzenie P&L
+      daily_pnl = health_data.get("trading", {}).get("daily_pnl", 0)
+      analysis["metrics"]["daily_pnl"] = daily_pnl
+      if daily_pnl < -10:  # Straty powyżej $10
+          analysis["alerts"].append({
+              "type": "high_losses",
+              "message": f"Wysokie straty dzienne: ${daily_pnl:.2f}",
+              "severity": "critical" if daily_pnl < -15 else "warning"
+          })
+          analysis["system_status"] = "critical"
+      
+      # Sprawdzenie czasu odpowiedzi
+      avg_decision_time = health_data.get("performance", {}).get("avg_decision_time_ms", 0)
+      analysis["metrics"]["avg_decision_time"] = avg_decision_time
+      if avg_decision_time > 500:  # Powyżej 500ms
+          analysis["warnings"].append({
+              "type": "slow_decisions",
+              "message": f"Wolne decyzje: {avg_decision_time:.1f}ms",
+              "severity": "info"
+          })
+      
+      # Sprawdzenie błędów bazy danych
+      db_errors = health_data.get("database", {}).get("error_count", 0)
+      analysis["metrics"]["db_errors"] = db_errors
+      if db_errors > 0:
+          analysis["warnings"].append({
+              "type": "database_errors",
+              "message": f"Błędy bazy danych: {db_errors}",
+              "severity": "warning"
+          })
+      
+      # Określenie ogólnego statusu
+      if analysis["alerts"]:
+          critical_alerts = [a for a in analysis["alerts"] if a["severity"] == "critical"]
+          if critical_alerts:
+              analysis["system_status"] = "critical"
+          else:
+              analysis["system_status"] = "warning"
+      
+      print(json.dumps(analysis, indent=2))
+
+  # 5. Sprawdzenie czy są alerty krytyczne
+  - id: check-critical-alerts
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs['analyze-system-state'].vars.json.system_status == 'critical' }}"
+    then:
+      # Wysłanie alertu krytycznego
+      - id: send-critical-alert
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+        method: POST
+        contentType: "application/json"
+        body: |
+          {
+            "chat_id": "{{ vars.telegram_chat_id }}",
+            "text": "🚨 *ALERT KRYTYCZNY - Cerberus Trading Bot*\n\n{{ outputs['analyze-system-state'].vars.json.alerts | map(attribute='message') | join('\n') }}\n\n⏰ Czas: {{ outputs['analyze-system-state'].vars.json.timestamp }}",
+            "parse_mode": "Markdown"
+          }
+        allowFailed: true
+        description: "Wysłanie alertu krytycznego przez Telegram"
+      
+      - id: log-critical-alert
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          🚨 ALERT KRYTYCZNY:
+          {{ outputs['analyze-system-state'].vars.json.alerts | map(attribute='message') | join('\n') }}
+        level: ERROR
+
+  # 6. Sprawdzenie czy są ostrzeżenia
+  - id: check-warnings
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs['analyze-system-state'].vars.json.system_status == 'warning' }}"
+    then:
+      # Wysłanie ostrzeżenia
+      - id: send-warning-alert
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+        method: POST
+        contentType: "application/json"
+        body: |
+          {
+            "chat_id": "{{ vars.telegram_chat_id }}",
+            "text": "⚠️ *OSTRZEŻENIE - Cerberus Trading Bot*\n\n{{ outputs['analyze-system-state'].vars.json.alerts | map(attribute='message') | join('\n') }}\n\n⏰ Czas: {{ outputs['analyze-system-state'].vars.json.timestamp }}",
+            "parse_mode": "Markdown"
+          }
+        allowFailed: true
+        description: "Wysłanie ostrzeżenia przez Telegram"
+      
+      - id: log-warning
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          ⚠️ OSTRZEŻENIE:
+          {{ outputs['analyze-system-state'].vars.json.alerts | map(attribute='message') | join('\n') }}
+        level: WARN
+
+  # 7. Sprawdzenie pozycji
+  - id: check-positions
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/api/positions"
+    method: GET
+    timeout: "{{ vars.timeout }}"
+    description: "Sprawdzenie aktywnych pozycji"
+
+  # 8. Analiza pozycji
+  - id: analyze-positions
+    type: io.kestra.plugin.scripts.python.Script
+    script: |
+      import json
+      
+      positions_data = {{ outputs['check-positions'].body.data | tojson }}
+      
+      analysis = {
+          "total_positions": positions_data.get("total_positions", 0),
+          "total_value": positions_data.get("total_value", 0),
+          "positions": positions_data.get("positions", []),
+          "risk_alerts": []
+      }
+      
+      # Sprawdzenie czy nie ma za dużo pozycji
+      if analysis["total_positions"] > 3:
+          analysis["risk_alerts"].append(f"Za dużo pozycji: {analysis['total_positions']}/3")
+      
+      # Sprawdzenie wartości pozycji
+      if analysis["total_value"] > 1000:  # Przykładowy limit
+          analysis["risk_alerts"].append(f"Wysoka wartość pozycji: ${analysis['total_value']:.2f}")
+      
+      print(json.dumps(analysis, indent=2))
+
+  # 9. Raport dzienny (tylko o 18:00)
+  - id: daily-report-check
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ now() | date('HH') == '18' }}"
+    then:
+      - id: generate-daily-report
+        type: io.kestra.plugin.scripts.python.Script
+        script: |
+          import json
+          from datetime import datetime
+          
+          health_data = {{ outputs['detailed-health-check'].body.data | tojson }}
+          positions_data = {{ outputs['analyze-positions'].vars.json | tojson }}
+          
+          report = f"""
+          📊 *DZIENNY RAPORT CERBERUS*
+          📅 Data: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+          
+          💰 *FINANSE:*
+          • Balans: ${health_data.get('trading', {}).get('current_balance', 0):.2f}
+          • P&L dzienny: ${health_data.get('trading', {}).get('daily_pnl', 0):.2f}
+          • Success rate: {health_data.get('trading', {}).get('success_rate', 0):.1%}
+          
+          📈 *TRADING:*
+          • Sygnały: {health_data.get('trading', {}).get('total_signals', 0)}
+          • Udane: {health_data.get('trading', {}).get('successful_trades', 0)}
+          • Nieudane: {health_data.get('trading', {}).get('failed_trades', 0)}
+          • Pozycje: {positions_data.get('total_positions', 0)}
+          
+          🖥️ *SYSTEM:*
+          • CPU: {health_data.get('system', {}).get('cpu_usage_percent', 0):.1f}%
+          • RAM: {health_data.get('system', {}).get('memory_usage_mb', 0):.0f}MB
+          • Uptime: {health_data.get('system', {}).get('uptime_seconds', 0)//3600:.0f}h
+          
+          📊 *WYDAJNOŚĆ:*
+          • Śr. czas decyzji: {health_data.get('performance', {}).get('avg_decision_time_ms', 0):.1f}ms
+          • Błędy DB: {health_data.get('database', {}).get('error_count', 0)}
+          """
+          
+          print(report)
+      
+      - id: send-daily-report
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+        method: POST
+        contentType: "application/json"
+        body: |
+          {
+            "chat_id": "{{ vars.telegram_chat_id }}",
+            "text": "{{ outputs['generate-daily-report'].vars.stdout }}",
+            "parse_mode": "Markdown"
+          }
+        allowFailed: true
+        description: "Wysłanie dziennego raportu"
+
+  # 10. Podsumowanie monitoringu
+  - id: monitoring-summary
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      📊 PODSUMOWANIE MONITORINGU:
+      Status: {{ outputs['analyze-system-state'].vars.json.system_status }}
+      CPU: {{ outputs['analyze-system-state'].vars.json.metrics.cpu_usage }}%
+      RAM: {{ outputs['analyze-system-state'].vars.json.metrics.memory_usage }}MB
+      Success Rate: {{ (outputs['analyze-system-state'].vars.json.metrics.success_rate * 100) | round(1) }}%
+      P&L: ${{ outputs['analyze-system-state'].vars.json.metrics.daily_pnl }}
+      Pozycje: {{ outputs['analyze-positions'].vars.json.total_positions }}
+    level: INFO
+
+errors:
+  - id: monitoring-error-handler
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      💥 BŁĄD MONITORINGU:
+      Task: {{ error.taskId }}
+      Error: {{ error.message }}
+    level: ERROR
+
+triggers:
+  # Monitoring co 2 minuty
+  - id: continuous-monitoring
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/2 * * * *"
+    timezone: "Europe/Warsaw"
+    disabled: false
+
+  # Raport dzienny o 18:00
+  - id: daily-report
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 18 * * *"
+    timezone: "Europe/Warsaw"
+    disabled: false

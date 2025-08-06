@@ -1,0 +1,350 @@
+id: cerberus-analytics
+namespace: cerberus.analytics
+
+description: |
+  Pipeline analityczny Cerberus - analizuje dane historyczne, generuje raporty
+  i identyfikuje trendy w wydajności tradingu.
+
+inputs:
+  - id: analysis_period_days
+    type: INT
+    defaults: 7
+    description: "Okres analizy w dniach"
+  
+  - id: generate_charts
+    type: BOOLEAN
+    defaults: true
+    description: "Czy generować wykresy"
+  
+  - id: send_report
+    type: BOOLEAN
+    defaults: true
+    description: "Czy wysłać raport"
+
+variables:
+  cerberus_api_base: "http://cerberus:8080"
+  timeout: "PT60S"
+  telegram_bot_token: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+  telegram_chat_id: "{{ secret('TELEGRAM_CHAT_ID') }}"
+
+tasks:
+  # 1. Pobranie danych historycznych
+  - id: fetch-historical-data
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/api/trades"
+    method: GET
+    timeout: "{{ vars.timeout }}"
+    headers:
+      Content-Type: "application/json"
+    body: |
+      {
+        "from": {{ (now() | dateAdd(-inputs.analysis_period_days, 'DAYS')) | date('X') }},
+        "to": {{ now() | date('X') }},
+        "limit": 1000
+      }
+    description: "Pobranie danych historycznych transakcji"
+
+  # 2. Pobranie metryk systemu
+  - id: fetch-system-metrics
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/metrics"
+    method: GET
+    timeout: "{{ vars.timeout }}"
+    description: "Pobranie aktualnych metryk systemu"
+
+  # 3. Analiza wydajności tradingu
+  - id: analyze-trading-performance
+    type: io.kestra.plugin.scripts.python.Script
+    beforeCommands:
+      - pip install pandas numpy matplotlib seaborn
+    script: |
+      import json
+      import pandas as pd
+      import numpy as np
+      from datetime import datetime, timedelta
+      import matplotlib.pyplot as plt
+      import seaborn as sns
+      
+      # Pobranie danych
+      trades_data = {{ outputs['fetch-historical-data'].body.data | tojson }}
+      metrics_data = {{ outputs['fetch-system-metrics'].body.data | tojson }}
+      
+      # Analiza podstawowa
+      analysis = {
+          "period_days": {{ inputs.analysis_period_days }},
+          "analysis_date": datetime.now().isoformat(),
+          "summary": {},
+          "trends": {},
+          "recommendations": []
+      }
+      
+      # Podstawowe statystyki
+      total_trades = len(trades_data.get("trades", []))
+      current_balance = metrics_data.get("current_balance", 0)
+      daily_pnl = metrics_data.get("daily_pnl", 0)
+      success_rate = metrics_data.get("success_rate", 0)
+      
+      analysis["summary"] = {
+          "total_trades": total_trades,
+          "current_balance": current_balance,
+          "daily_pnl": daily_pnl,
+          "success_rate": success_rate,
+          "avg_trades_per_day": total_trades / {{ inputs.analysis_period_days }} if {{ inputs.analysis_period_days }} > 0 else 0
+      }
+      
+      # Analiza trendów (symulacja - w rzeczywistości byłaby bardziej złożona)
+      if total_trades > 0:
+          # Trend success rate
+          if success_rate > 0.7:
+              analysis["trends"]["success_rate"] = "rosnący"
+              analysis["recommendations"].append("Dobra wydajność - kontynuuj obecną strategię")
+          elif success_rate > 0.5:
+              analysis["trends"]["success_rate"] = "stabilny"
+              analysis["recommendations"].append("Średnia wydajność - rozważ optymalizację")
+          else:
+              analysis["trends"]["success_rate"] = "spadający"
+              analysis["recommendations"].append("Niska wydajność - wymagana analiza strategii")
+          
+          # Trend P&L
+          if daily_pnl > 5:
+              analysis["trends"]["pnl"] = "bardzo dobry"
+              analysis["recommendations"].append("Wysokie zyski - rozważ zwiększenie pozycji")
+          elif daily_pnl > 0:
+              analysis["trends"]["pnl"] = "pozytywny"
+              analysis["recommendations"].append("Pozytywne wyniki - kontynuuj")
+          elif daily_pnl > -5:
+              analysis["trends"]["pnl"] = "neutralny"
+              analysis["recommendations"].append("Neutralne wyniki - monitoruj sytuację")
+          else:
+              analysis["trends"]["pnl"] = "negatywny"
+              analysis["recommendations"].append("Straty - rozważ zmniejszenie ryzyka")
+      else:
+          analysis["recommendations"].append("Brak danych do analizy - zwiększ aktywność tradingu")
+      
+      # Analiza ryzyka
+      risk_level = "niskie"
+      if current_balance < 30:  # Poniżej 60% początkowego kapitału
+          risk_level = "wysokie"
+          analysis["recommendations"].append("UWAGA: Niski balans - rozważ zmniejszenie ryzyka")
+      elif daily_pnl < -10:
+          risk_level = "średnie"
+          analysis["recommendations"].append("Wysokie straty dzienne - monitoruj pozycje")
+      
+      analysis["risk_assessment"] = {
+          "level": risk_level,
+          "balance_ratio": current_balance / 50.0,  # Zakładając początkowy kapitał $50
+          "daily_loss_ratio": abs(daily_pnl) / current_balance if current_balance > 0 else 0
+      }
+      
+      print(json.dumps(analysis, indent=2))
+
+  # 4. Generowanie wykresów (jeśli włączone)
+  - id: generate-charts
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.generate_charts == true }}"
+    then:
+      - id: create-performance-charts
+        type: io.kestra.plugin.scripts.python.Script
+        beforeCommands:
+          - pip install pandas numpy matplotlib seaborn
+        script: |
+          import matplotlib.pyplot as plt
+          import numpy as np
+          from datetime import datetime, timedelta
+          import json
+          
+          # Pobranie danych analizy
+          analysis_data = {{ outputs['analyze-trading-performance'].vars.json | tojson }}
+          
+          # Tworzenie wykresów
+          fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+          fig.suptitle('Cerberus Trading Bot - Analiza Wydajności', fontsize=16)
+          
+          # Wykres 1: Success Rate
+          success_rate = analysis_data["summary"]["success_rate"]
+          ax1.bar(['Success Rate'], [success_rate * 100], color='green' if success_rate > 0.6 else 'orange' if success_rate > 0.4 else 'red')
+          ax1.set_ylabel('Procent (%)')
+          ax1.set_title('Success Rate')
+          ax1.set_ylim(0, 100)
+          
+          # Wykres 2: P&L
+          daily_pnl = analysis_data["summary"]["daily_pnl"]
+          color = 'green' if daily_pnl > 0 else 'red'
+          ax2.bar(['Daily P&L'], [daily_pnl], color=color)
+          ax2.set_ylabel('USD')
+          ax2.set_title('Dzienny P&L')
+          ax2.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+          
+          # Wykres 3: Balans vs Cel
+          current_balance = analysis_data["summary"]["current_balance"]
+          target_balance = 1000  # Cel $1000
+          ax3.bar(['Aktualny', 'Cel'], [current_balance, target_balance], color=['blue', 'gray'])
+          ax3.set_ylabel('USD')
+          ax3.set_title('Balans vs Cel')
+          
+          # Wykres 4: Poziom ryzyka
+          risk_levels = ['Niskie', 'Średnie', 'Wysokie']
+          risk_colors = ['green', 'orange', 'red']
+          current_risk = analysis_data["risk_assessment"]["level"]
+          risk_values = [1 if current_risk == 'niskie' else 0,
+                        1 if current_risk == 'średnie' else 0,
+                        1 if current_risk == 'wysokie' else 0]
+          
+          ax4.bar(risk_levels, risk_values, color=risk_colors, alpha=0.7)
+          ax4.set_ylabel('Aktualny poziom')
+          ax4.set_title('Poziom Ryzyka')
+          ax4.set_ylim(0, 1.2)
+          
+          plt.tight_layout()
+          plt.savefig('performance_charts.png', dpi=300, bbox_inches='tight')
+          plt.close()
+          
+          print("Wykresy wygenerowane: performance_charts.png")
+        outputFiles:
+          - performance_charts.png
+
+  # 5. Generowanie raportu tekstowego
+  - id: generate-text-report
+    type: io.kestra.plugin.scripts.python.Script
+    script: |
+      import json
+      from datetime import datetime
+      
+      analysis_data = {{ outputs['analyze-trading-performance'].vars.json | tojson }}
+      
+      report = f"""
+      📊 *RAPORT ANALITYCZNY CERBERUS*
+      📅 Okres: {analysis_data['period_days']} dni
+      🕐 Wygenerowano: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+      
+      💰 *PODSUMOWANIE FINANSOWE:*
+      • Aktualny balans: ${analysis_data['summary']['current_balance']:.2f}
+      • P&L dzienny: ${analysis_data['summary']['daily_pnl']:.2f}
+      • Success rate: {analysis_data['summary']['success_rate']:.1%}
+      • Łączne transakcje: {analysis_data['summary']['total_trades']}
+      • Śr. transakcji/dzień: {analysis_data['summary']['avg_trades_per_day']:.1f}
+      
+      📈 *ANALIZA TRENDÓW:*
+      • Success rate: {analysis_data['trends'].get('success_rate', 'brak danych')}
+      • P&L: {analysis_data['trends'].get('pnl', 'brak danych')}
+      
+      ⚠️ *OCENA RYZYKA:*
+      • Poziom: {analysis_data['risk_assessment']['level']}
+      • Stosunek balansu: {analysis_data['risk_assessment']['balance_ratio']:.1%}
+      • Stosunek strat: {analysis_data['risk_assessment']['daily_loss_ratio']:.1%}
+      
+      💡 *REKOMENDACJE:*
+      """
+      
+      for i, rec in enumerate(analysis_data['recommendations'], 1):
+          report += f"• {rec}\n"
+      
+      print(report)
+
+  # 6. Wysłanie raportu (jeśli włączone)
+  - id: send-analytics-report
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.send_report == true }}"
+    then:
+      - id: send-text-report
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+        method: POST
+        contentType: "application/json"
+        body: |
+          {
+            "chat_id": "{{ vars.telegram_chat_id }}",
+            "text": "{{ outputs['generate-text-report'].vars.stdout }}",
+            "parse_mode": "Markdown"
+          }
+        allowFailed: true
+        description: "Wysłanie raportu tekstowego"
+      
+      # Wysłanie wykresów (jeśli zostały wygenerowane)
+      - id: send-charts
+        type: io.kestra.plugin.core.flow.If
+        condition: "{{ inputs.generate_charts == true and outputs['generate-charts']['create-performance-charts'] is defined }}"
+        then:
+          - id: send-chart-image
+            type: io.kestra.plugin.core.http.Request
+            uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendPhoto"
+            method: POST
+            contentType: "multipart/form-data"
+            formData:
+              chat_id: "{{ vars.telegram_chat_id }}"
+              caption: "📊 Wykresy wydajności Cerberus"
+              photo: "{{ outputs['generate-charts']['create-performance-charts'].outputFiles['performance_charts.png'] }}"
+            allowFailed: true
+            description: "Wysłanie wykresów"
+
+  # 7. Zapisanie wyników analizy
+  - id: save-analysis-results
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/api/analytics/save"
+    method: POST
+    contentType: "application/json"
+    body: |
+      {
+        "analysis_date": "{{ outputs['analyze-trading-performance'].vars.json.analysis_date }}",
+        "period_days": {{ inputs.analysis_period_days }},
+        "results": {{ outputs['analyze-trading-performance'].vars.json | tojson }}
+      }
+    allowFailed: true
+    description: "Zapisanie wyników analizy w systemie"
+
+  # 8. Podsumowanie analizy
+  - id: analysis-summary
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      📊 PODSUMOWANIE ANALIZY:
+      Okres: {{ inputs.analysis_period_days }} dni
+      Transakcje: {{ outputs['analyze-trading-performance'].vars.json.summary.total_trades }}
+      Success Rate: {{ (outputs['analyze-trading-performance'].vars.json.summary.success_rate * 100) | round(1) }}%
+      P&L: ${{ outputs['analyze-trading-performance'].vars.json.summary.daily_pnl }}
+      Balans: ${{ outputs['analyze-trading-performance'].vars.json.summary.current_balance }}
+      Ryzyko: {{ outputs['analyze-trading-performance'].vars.json.risk_assessment.level }}
+      Rekomendacje: {{ outputs['analyze-trading-performance'].vars.json.recommendations | length }}
+    level: INFO
+
+errors:
+  - id: analytics-error-handler
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      💥 BŁĄD ANALIZY:
+      Task: {{ error.taskId }}
+      Error: {{ error.message }}
+    level: ERROR
+
+triggers:
+  # Analiza codzienna o 19:00
+  - id: daily-analytics
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 19 * * *"
+    timezone: "Europe/Warsaw"
+    disabled: false
+    inputs:
+      analysis_period_days: 1
+      generate_charts: true
+      send_report: true
+
+  # Analiza tygodniowa w niedzielę o 20:00
+  - id: weekly-analytics
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 20 * * SUN"
+    timezone: "Europe/Warsaw"
+    disabled: false
+    inputs:
+      analysis_period_days: 7
+      generate_charts: true
+      send_report: true
+
+  # Analiza miesięczna pierwszego dnia miesiąca o 21:00
+  - id: monthly-analytics
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 21 1 * *"
+    timezone: "Europe/Warsaw"
+    disabled: false
+    inputs:
+      analysis_period_days: 30
+      generate_charts: true
+      send_report: true

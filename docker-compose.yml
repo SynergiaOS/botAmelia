@@ -1,0 +1,138 @@
+version: '3.8'
+
+services:
+  cerberus:
+    build: .
+    container_name: cerberus-trading
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # HTTP API
+      - "9090:9090"  # Metrics
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    env_file:
+      - .env
+    environment:
+      - RUST_LOG=cerberus=info
+      - CERBERUS_ENVIRONMENT=production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - cerberus-net
+
+  # Optional: Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cerberus-prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - cerberus-net
+    profiles:
+      - monitoring
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cerberus-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - cerberus-net
+    profiles:
+      - monitoring
+
+  # Kestra Orchestration Platform
+  postgres:
+    image: postgres:15
+    container_name: cerberus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kestra
+      POSTGRES_USER: kestra
+      POSTGRES_PASSWORD: kestra
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cerberus-net
+    profiles:
+      - orchestration
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kestra"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  kestra:
+    image: kestra/kestra:latest
+    container_name: cerberus-kestra
+    restart: unless-stopped
+    command: ["server", "standalone"]
+    ports:
+      - "8081:8080"  # Kestra UI
+    environment:
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://postgres:5432/kestra
+            username: kestra
+            password: kestra
+        kestra:
+          queue:
+            type: postgres
+          storage:
+            type: local
+            local:
+              base-path: "/app/storage"
+          repository:
+            type: postgres
+    # volumes:
+      # - ./kestra/flows:/app/flows
+      # - ./kestra/storage:/app/storage
+      # - kestra_data:/app/data
+    networks:
+      - cerberus-net
+    profiles:
+      - orchestration
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  postgres_data:
+  kestra_data:
+
+networks:
+  cerberus-net:
+    driver: bridge

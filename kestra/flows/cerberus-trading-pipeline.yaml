@@ -1,0 +1,263 @@
+id: cerberus-trading-pipeline
+namespace: cerberus.trading
+
+description: |
+  Główny pipeline tradingowy Cerberus - orkiestruje proces od sygnału do wykonania transakcji
+  z pełnym zarządzaniem ryzykiem i monitoringiem.
+
+inputs:
+  - id: risk_threshold
+    type: FLOAT
+    defaults: 15.0
+    description: "Próg ryzyka dla oceny sygnałów (w USD)"
+  
+  - id: max_leverage
+    type: INT
+    defaults: 30
+    description: "Maksymalna dźwignia dla transakcji"
+  
+  - id: force_execution
+    type: BOOLEAN
+    defaults: false
+    description: "Wymusza wykonanie pomimo ostrzeżeń ryzyka"
+
+variables:
+  cerberus_api_base: "http://cerberus:8080"
+  signal_timeout: "PT30S"
+  execution_timeout: "PT60S"
+
+tasks:
+  # 1. Sprawdzenie stanu systemu
+  - id: system-health-check
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/health"
+    method: GET
+    timeout: "{{ vars.signal_timeout }}"
+    description: "Sprawdzenie czy system Cerberus jest gotowy do tradingu"
+
+  # 2. Walidacja stanu systemu
+  - id: validate-system-ready
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs['system-health-check'].body.success == true }}"
+    then:
+      - id: log-system-ready
+        type: io.kestra.plugin.core.log.Log
+        message: "✅ System Cerberus gotowy do tradingu"
+        level: INFO
+    else:
+      - id: system-not-ready
+        type: io.kestra.plugin.core.log.Log
+        message: "❌ System Cerberus nie jest gotowy - przerywanie pipeline'u"
+        level: ERROR
+      - id: fail-pipeline
+        type: io.kestra.plugin.core.flow.Fail
+        message: "System nie jest gotowy do tradingu"
+
+  # 3. Pobranie aktualnych metryk systemu
+  - id: fetch-system-metrics
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/metrics"
+    method: GET
+    timeout: "{{ vars.signal_timeout }}"
+    description: "Pobranie aktualnych metryk systemu"
+
+  # 4. Sprawdzenie circuit breaker
+  - id: check-circuit-breaker
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/api/risk/status"
+    method: GET
+    timeout: "{{ vars.signal_timeout }}"
+    description: "Sprawdzenie czy circuit breaker nie jest aktywny"
+
+  # 5. Walidacja circuit breaker
+  - id: validate-circuit-breaker
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs['check-circuit-breaker'].body.data.circuit_breaker_active == false }}"
+    then:
+      - id: log-circuit-breaker-ok
+        type: io.kestra.plugin.core.log.Log
+        message: "✅ Circuit breaker nieaktywny - można kontynuować"
+        level: INFO
+    else:
+      - id: circuit-breaker-active
+        type: io.kestra.plugin.core.log.Log
+        message: "⚠️ Circuit breaker aktywny - przerywanie tradingu"
+        level: WARN
+      - id: fail-circuit-breaker
+        type: io.kestra.plugin.core.flow.Fail
+        message: "Circuit breaker aktywny - trading zatrzymany"
+
+  # 6. Symulacja otrzymania sygnału tradingowego (w przyszłości z zewnętrznego źródła)
+  - id: generate-mock-signal
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: create-signal-script
+        type: io.kestra.plugin.core.storage.LocalFiles
+        inputs:
+          generate_signal.py: |
+            import json
+            import random
+            import time
+            from datetime import datetime
+            
+            # Symulacja sygnału tradingowego
+            tokens = ["DOGE", "SHIB", "PEPE", "FLOKI", "BONK"]
+            confidences = ["Low", "Medium", "High", "Extreme"]
+            
+            signal = {
+                "token": random.choice(tokens),
+                "source": "mock_signal_generator",
+                "confidence": random.choice(confidences),
+                "price": round(random.uniform(0.0001, 1.0), 6),
+                "volume": round(random.uniform(1000000, 100000000), 2),
+                "timestamp": int(time.time()),
+                "metadata": {
+                    "signal_strength": random.uniform(0.6, 0.95),
+                    "market_sentiment": random.choice(["bullish", "bearish", "neutral"]),
+                    "volatility": random.uniform(0.1, 0.8)
+                }
+            }
+            
+            print(json.dumps(signal))
+            
+            # Zapisz do pliku dla następnych kroków
+            with open('signal.json', 'w') as f:
+                json.dump(signal, f)
+      
+      - id: execute-signal-generation
+        type: io.kestra.plugin.scripts.python.Script
+        beforeCommands:
+          - pip install requests
+        script: |
+          exec(open('generate_signal.py').read())
+        outputFiles:
+          - signal.json
+
+  # 7. Walidacja sygnału przez Cerberus
+  - id: validate-signal
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/api/signals/validate"
+    method: POST
+    contentType: "application/json"
+    body: "{{ outputs['generate-mock-signal']['execute-signal-generation'].outputFiles['signal.json'] | jq }}"
+    timeout: "{{ vars.signal_timeout }}"
+    description: "Walidacja sygnału przez system Cerberus"
+
+  # 8. Ocena ryzyka
+  - id: assess-risk
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/api/risk/assess"
+    method: POST
+    contentType: "application/json"
+    body: |
+      {
+        "signals": [{{ outputs['generate-mock-signal']['execute-signal-generation'].outputFiles['signal.json'] | jq }}],
+        "risk_threshold": {{ inputs.risk_threshold }},
+        "portfolio_balance": {{ outputs['fetch-system-metrics'].body.data.current_balance }}
+      }
+    timeout: "{{ vars.signal_timeout }}"
+    description: "Ocena ryzyka dla sygnału tradingowego"
+
+  # 9. Decyzja o wykonaniu transakcji
+  - id: trading-decision
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs['assess-risk'].body.data.approved == true or inputs.force_execution == true }}"
+    then:
+      # Wykonanie transakcji
+      - id: execute-trade
+        type: io.kestra.plugin.core.http.Request
+        uri: "{{ vars.cerberus_api_base }}/api/trades"
+        method: POST
+        contentType: "application/json"
+        body: |
+          {
+            "signal": {{ outputs['generate-mock-signal']['execute-signal-generation'].outputFiles['signal.json'] | jq }},
+            "risk_assessment": {{ outputs['assess-risk'].body.data | tojson }},
+            "leverage": {{ [outputs['assess-risk'].body.data.max_leverage, inputs.max_leverage] | min }},
+            "force_execution": {{ inputs.force_execution }}
+          }
+        timeout: "{{ vars.execution_timeout }}"
+        description: "Wykonanie transakcji tradingowej"
+      
+      - id: log-trade-executed
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          🚀 Transakcja wykonana:
+          Token: {{ outputs['generate-mock-signal']['execute-signal-generation'].outputFiles['signal.json'].token }}
+          Confidence: {{ outputs['generate-mock-signal']['execute-signal-generation'].outputFiles['signal.json'].confidence }}
+          Trade ID: {{ outputs['execute-trade'].body.data.trade_id }}
+        level: INFO
+    else:
+      # Odrzucenie transakcji
+      - id: log-trade-rejected
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          ❌ Transakcja odrzucona:
+          Token: {{ outputs['generate-mock-signal']['execute-signal-generation'].outputFiles['signal.json'].token }}
+          Powód: {{ outputs['assess-risk'].body.data.reasoning }}
+          Risk Level: {{ outputs['assess-risk'].body.data.risk_level }}
+        level: WARN
+
+  # 10. Aktualizacja metryk
+  - id: update-metrics
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ vars.cerberus_api_base }}/api/metrics/update"
+    method: POST
+    contentType: "application/json"
+    body: |
+      {
+        "pipeline_execution": {
+          "execution_id": "{{ flow.id }}-{{ taskrun.startDate }}",
+          "signal_processed": true,
+          "trade_executed": {{ outputs['trading-decision'] is defined and outputs['execute-trade'] is defined }},
+          "execution_time_ms": {{ (taskrun.endDate - taskrun.startDate) * 1000 }},
+          "timestamp": "{{ taskrun.startDate }}"
+        }
+      }
+    allowFailed: true
+    description: "Aktualizacja metryk wykonania pipeline'u"
+
+  # 11. Podsumowanie wykonania
+  - id: execution-summary
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      📊 PODSUMOWANIE PIPELINE'U TRADINGOWEGO:
+      ==========================================
+      ⏰ Czas wykonania: {{ taskrun.startDate }} - {{ taskrun.endDate }}
+      🎯 Sygnał: {{ outputs['generate-mock-signal']['execute-signal-generation'].outputFiles['signal.json'].token }} ({{ outputs['generate-mock-signal']['execute-signal-generation'].outputFiles['signal.json'].confidence }})
+      💰 Balans: {{ outputs['fetch-system-metrics'].body.data.current_balance }} USD
+      📈 P&L dzienny: {{ outputs['fetch-system-metrics'].body.data.daily_pnl }} USD
+      ⚖️ Ocena ryzyka: {{ outputs['assess-risk'].body.data.approved }}
+      🔄 Transakcja: {{ outputs['trading-decision'] is defined and outputs['execute-trade'] is defined }}
+      ==========================================
+    level: INFO
+
+errors:
+  - id: error-handler
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      💥 BŁĄD W PIPELINE TRADINGOWYM:
+      Execution ID: {{ flow.id }}-{{ taskrun.startDate }}
+      Error: {{ error.message }}
+      Task: {{ error.taskId }}
+    level: ERROR
+
+triggers:
+  # Trigger manualny dla testów
+  - id: manual-trigger
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 0 1 1 *"  # Nigdy się nie uruchomi automatycznie
+    disabled: true
+
+  # Trigger co 5 minut w godzinach tradingu (9:00-17:00, pon-pt)
+  - id: trading-hours-trigger
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/5 9-17 * * MON-FRI"
+    timezone: "Europe/Warsaw"
+    disabled: false  # Włącz gdy system będzie gotowy do produkcji
+
+  # Webhook trigger dla zewnętrznych sygnałów
+  - id: external-signal-webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "cerberus-trading-signal"
+    disabled: false

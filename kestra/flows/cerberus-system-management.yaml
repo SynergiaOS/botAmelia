@@ -1,0 +1,345 @@
+id: cerberus-system-management
+namespace: cerberus.system
+
+description: |
+  System zarządzania Cerberus - obsługuje operacje systemowe, backup,
+  maintenance i emergency procedures.
+
+inputs:
+  - id: operation_type
+    type: STRING
+    defaults: "health_check"
+    description: "Typ operacji: health_check, backup, maintenance, emergency_stop, restart"
+  
+  - id: force_operation
+    type: BOOLEAN
+    defaults: false
+    description: "Wymusza operację pomimo ostrzeżeń"
+  
+  - id: maintenance_duration_minutes
+    type: INT
+    defaults: 30
+    description: "Czas trwania maintenance w minutach"
+
+variables:
+  cerberus_api_base: "http://cerberus:8080"
+  timeout: "PT60S"
+  telegram_bot_token: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+  telegram_chat_id: "{{ secret('TELEGRAM_CHAT_ID') }}"
+
+tasks:
+  # 1. Sprawdzenie typu operacji i przekierowanie
+  - id: operation-router
+    type: io.kestra.plugin.core.flow.Switch
+    value: "{{ inputs.operation_type }}"
+    cases:
+      health_check:
+        - id: comprehensive-health-check
+          type: io.kestra.plugin.core.http.Request
+          uri: "{{ vars.cerberus_api_base }}/health/detailed"
+          method: GET
+          timeout: "{{ vars.timeout }}"
+          description: "Kompleksowe sprawdzenie stanu systemu"
+        
+        - id: log-health-status
+          type: io.kestra.plugin.core.log.Log
+          message: |
+            🏥 SPRAWDZENIE STANU SYSTEMU:
+            Status: {{ outputs['comprehensive-health-check'].body.success }}
+            CPU: {{ outputs['comprehensive-health-check'].body.data.system.cpu_usage_percent }}%
+            RAM: {{ outputs['comprehensive-health-check'].body.data.system.memory_usage_mb }}MB
+            Balans: ${{ outputs['comprehensive-health-check'].body.data.trading.current_balance }}
+            P&L: ${{ outputs['comprehensive-health-check'].body.data.trading.daily_pnl }}
+          level: INFO
+
+      backup:
+        - id: notify-backup-start
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+          method: POST
+          contentType: "application/json"
+          body: |
+            {
+              "chat_id": "{{ vars.telegram_chat_id }}",
+              "text": "💾 *BACKUP ROZPOCZĘTY*\n\nCzas: {{ now() | date('yyyy-MM-dd HH:mm') }}\nStatus: W trakcie...",
+              "parse_mode": "Markdown"
+            }
+          allowFailed: true
+        
+        - id: create-database-backup
+          type: io.kestra.plugin.core.http.Request
+          uri: "{{ vars.cerberus_api_base }}/api/system/backup"
+          method: POST
+          timeout: "PT300S"  # 5 minut na backup
+          description: "Tworzenie kopii zapasowej bazy danych"
+        
+        - id: verify-backup
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ outputs['create-database-backup'].body.success == true }}"
+          then:
+            - id: backup-success
+              type: io.kestra.plugin.core.http.Request
+              uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "chat_id": "{{ vars.telegram_chat_id }}",
+                  "text": "✅ *BACKUP ZAKOŃCZONY POMYŚLNIE*\n\nPlik: {{ outputs['create-database-backup'].body.data.backup_file }}\nRozmiar: {{ outputs['create-database-backup'].body.data.size_mb }}MB\nCzas: {{ now() | date('yyyy-MM-dd HH:mm') }}",
+                  "parse_mode": "Markdown"
+                }
+              allowFailed: true
+          else:
+            - id: backup-failed
+              type: io.kestra.plugin.core.http.Request
+              uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "chat_id": "{{ vars.telegram_chat_id }}",
+                  "text": "❌ *BACKUP NIEUDANY*\n\nBłąd: {{ outputs['create-database-backup'].body.error }}\nCzas: {{ now() | date('yyyy-MM-dd HH:mm') }}",
+                  "parse_mode": "Markdown"
+                }
+              allowFailed: true
+
+      maintenance:
+        - id: check-active-positions
+          type: io.kestra.plugin.core.http.Request
+          uri: "{{ vars.cerberus_api_base }}/api/positions"
+          method: GET
+          timeout: "{{ vars.timeout }}"
+          description: "Sprawdzenie aktywnych pozycji przed maintenance"
+        
+        - id: validate-maintenance-safety
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ outputs['check-active-positions'].body.data.total_positions == 0 or inputs.force_operation == true }}"
+          then:
+            - id: notify-maintenance-start
+              type: io.kestra.plugin.core.http.Request
+              uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "chat_id": "{{ vars.telegram_chat_id }}",
+                  "text": "🔧 *MAINTENANCE ROZPOCZĘTY*\n\nCzas trwania: {{ inputs.maintenance_duration_minutes }} min\nPozycje: {{ outputs['check-active-positions'].body.data.total_positions }}\nWymuszony: {{ inputs.force_operation }}",
+                  "parse_mode": "Markdown"
+                }
+              allowFailed: true
+            
+            - id: enable-maintenance-mode
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ vars.cerberus_api_base }}/api/system/maintenance"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "enabled": true,
+                  "duration_minutes": {{ inputs.maintenance_duration_minutes }},
+                  "reason": "Scheduled maintenance via Kestra"
+                }
+              timeout: "{{ vars.timeout }}"
+            
+            - id: wait-maintenance-duration
+              type: io.kestra.plugin.core.flow.Sleep
+              duration: "PT{{ inputs.maintenance_duration_minutes }}M"
+            
+            - id: disable-maintenance-mode
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ vars.cerberus_api_base }}/api/system/maintenance"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "enabled": false
+                }
+              timeout: "{{ vars.timeout }}"
+            
+            - id: notify-maintenance-end
+              type: io.kestra.plugin.core.http.Request
+              uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+              method: POST
+              contentType: "application/json"
+              body: |
+                {
+                  "chat_id": "{{ vars.telegram_chat_id }}",
+                  "text": "✅ *MAINTENANCE ZAKOŃCZONY*\n\nCzas: {{ now() | date('yyyy-MM-dd HH:mm') }}\nSystem wrócił do normalnej pracy",
+                  "parse_mode": "Markdown"
+                }
+              allowFailed: true
+          else:
+            - id: maintenance-blocked
+              type: io.kestra.plugin.core.log.Log
+              message: |
+                ⚠️ MAINTENANCE ZABLOKOWANY:
+                Aktywne pozycje: {{ outputs['check-active-positions'].body.data.total_positions }}
+                Użyj force_operation=true aby wymusić
+              level: WARN
+
+      emergency_stop:
+        - id: confirm-emergency-stop
+          type: io.kestra.plugin.core.log.Log
+          message: "🚨 INICJOWANIE EMERGENCY STOP"
+          level: ERROR
+        
+        - id: notify-emergency-stop
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+          method: POST
+          contentType: "application/json"
+          body: |
+            {
+              "chat_id": "{{ vars.telegram_chat_id }}",
+              "text": "🚨 *EMERGENCY STOP AKTYWOWANY*\n\nCzas: {{ now() | date('yyyy-MM-dd HH:mm') }}\nWszystkie operacje tradingowe zostały zatrzymane!",
+              "parse_mode": "Markdown"
+            }
+          allowFailed: true
+        
+        - id: execute-emergency-stop
+          type: io.kestra.plugin.core.http.Request
+          uri: "{{ vars.cerberus_api_base }}/api/system/emergency-stop"
+          method: POST
+          timeout: "{{ vars.timeout }}"
+          description: "Wykonanie emergency stop"
+        
+        - id: verify-emergency-stop
+          type: io.kestra.plugin.core.http.Request
+          uri: "{{ vars.cerberus_api_base }}/api/system/status"
+          method: GET
+          timeout: "{{ vars.timeout }}"
+        
+        - id: log-emergency-stop-result
+          type: io.kestra.plugin.core.log.Log
+          message: |
+            🚨 EMERGENCY STOP WYKONANY:
+            Status: {{ outputs['execute-emergency-stop'].body.data.status }}
+            Pozycje zamknięte: {{ outputs['execute-emergency-stop'].body.data.positions_closed }}
+            Zlecenia anulowane: {{ outputs['execute-emergency-stop'].body.data.orders_cancelled }}
+          level: ERROR
+
+      restart:
+        - id: pre-restart-backup
+          type: io.kestra.plugin.core.http.Request
+          uri: "{{ vars.cerberus_api_base }}/api/system/backup"
+          method: POST
+          timeout: "PT300S"
+          description: "Backup przed restartem"
+        
+        - id: notify-restart
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+          method: POST
+          contentType: "application/json"
+          body: |
+            {
+              "chat_id": "{{ vars.telegram_chat_id }}",
+              "text": "🔄 *RESTART SYSTEMU*\n\nCzas: {{ now() | date('yyyy-MM-dd HH:mm') }}\nBackup: {{ outputs['pre-restart-backup'].body.success }}\nSystem zostanie zrestartowany...",
+              "parse_mode": "Markdown"
+            }
+          allowFailed: true
+        
+        - id: execute-restart
+          type: io.kestra.plugin.core.http.Request
+          uri: "{{ vars.cerberus_api_base }}/api/system/restart"
+          method: POST
+          timeout: "PT120S"
+          description: "Restart systemu"
+        
+        - id: wait-for-restart
+          type: io.kestra.plugin.core.flow.Sleep
+          duration: "PT60S"
+        
+        - id: verify-restart
+          type: io.kestra.plugin.core.http.Request
+          uri: "{{ vars.cerberus_api_base }}/health"
+          method: GET
+          timeout: "{{ vars.timeout }}"
+          retry:
+            maxAttempt: 5
+            interval: "PT30S"
+        
+        - id: notify-restart-complete
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+          method: POST
+          contentType: "application/json"
+          body: |
+            {
+              "chat_id": "{{ vars.telegram_chat_id }}",
+              "text": "✅ *RESTART ZAKOŃCZONY*\n\nCzas: {{ now() | date('yyyy-MM-dd HH:mm') }}\nSystem działa poprawnie",
+              "parse_mode": "Markdown"
+            }
+          allowFailed: true
+
+    defaults:
+      - id: unknown-operation
+        type: io.kestra.plugin.core.log.Log
+        message: "❌ Nieznana operacja: {{ inputs.operation_type }}"
+        level: ERROR
+
+  # 2. Podsumowanie operacji
+  - id: operation-summary
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      🔧 PODSUMOWANIE OPERACJI SYSTEMOWEJ:
+      Typ: {{ inputs.operation_type }}
+      Czas: {{ taskrun.startDate }} - {{ taskrun.endDate }}
+      Wymuszony: {{ inputs.force_operation }}
+      Status: Zakończony
+    level: INFO
+
+errors:
+  - id: system-operation-error
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      💥 BŁĄD OPERACJI SYSTEMOWEJ:
+      Operacja: {{ inputs.operation_type }}
+      Task: {{ error.taskId }}
+      Error: {{ error.message }}
+    level: ERROR
+  
+  - id: notify-error
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://api.telegram.org/bot{{ vars.telegram_bot_token }}/sendMessage"
+    method: POST
+    contentType: "application/json"
+    body: |
+      {
+        "chat_id": "{{ vars.telegram_chat_id }}",
+        "text": "💥 *BŁĄD OPERACJI SYSTEMOWEJ*\n\nOperacja: {{ inputs.operation_type }}\nBłąd: {{ error.message }}\nCzas: {{ now() | date('yyyy-MM-dd HH:mm') }}",
+        "parse_mode": "Markdown"
+      }
+    allowFailed: true
+
+triggers:
+  # Automatyczny backup codziennie o 2:00
+  - id: daily-backup
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 2 * * *"
+    timezone: "Europe/Warsaw"
+    disabled: false
+    inputs:
+      operation_type: "backup"
+      force_operation: false
+
+  # Health check co godzinę
+  - id: hourly-health-check
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 * * * *"
+    timezone: "Europe/Warsaw"
+    disabled: false
+    inputs:
+      operation_type: "health_check"
+      force_operation: false
+
+  # Maintenance w niedzielę o 3:00 (30 minut)
+  - id: weekly-maintenance
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 3 * * SUN"
+    timezone: "Europe/Warsaw"
+    disabled: true  # Włącz gdy będzie potrzebne
+    inputs:
+      operation_type: "maintenance"
+      force_operation: false
+      maintenance_duration_minutes: 30

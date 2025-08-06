@@ -1,0 +1,56 @@
+# Fly.io deployment configuration for Cerberus v5.0
+app = "cerberus-trading"
+primary_region = "fra"  # Frankfurt for low latency to European exchanges
+
+[build]
+  image = "ghcr.io/synergiaos/botamelia:latest"
+
+[env]
+  RUST_LOG = "cerberus=info"
+  CERBERUS_ENVIRONMENT = "production"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[metrics]
+  port = 9090
+  path = "/metrics"
+
+[[vm]]
+  cpu_kind = "performance"
+  cpus = 2
+  memory_mb = 2048
+
+[mounts]
+  source = "cerberus_data"
+  destination = "/app/data"
+
+[[statics]]
+  guest_path = "/app/static"
+  url_prefix = "/static"
+
+[deploy]
+  release_command = "echo 'Cerberus v5.0 deploying...'"
+  strategy = "rolling"
+
+[processes]
+  app = "cerberus"
+
+# Secrets (set via: fly secrets set KEY=value)
+# SOLANA_PRIVATE_KEY
+# GEMINI_API_KEY
+# SENTRY_DSN
+# TELEGRAM_BOT_TOKEN
+# TELEGRAM_CHAT_ID

@@ -1,0 +1,37 @@
+# Prometheus configuration for Cerberus v5.0
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "rules/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Cerberus main application
+  - job_name: 'cerberus'
+    static_configs:
+      - targets: ['cerberus:9090']
+    scrape_interval: 5s
+    metrics_path: /metrics
+    
+  # System metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Optional: External APIs monitoring
+  - job_name: 'external-apis'
+    static_configs:
+      - targets: ['api-monitor:8080']
+    scrape_interval: 30s

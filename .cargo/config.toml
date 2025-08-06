@@ -1,0 +1,148 @@
+# Cargo configuration for Cerberus v5.0
+# Optimizes build and test performance
+
+[build]
+# Use all available CPU cores for compilation
+jobs = 0
+
+# [target.x86_64-unknown-linux-gnu]
+# Link with mold for faster linking (if available)
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.x86_64-pc-windows-msvc]
+# Windows-specific optimizations
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-apple-darwin]
+# macOS-specific optimizations
+rustflags = ["-C", "link-arg=-Wl,-dead_strip"]
+
+# Test-specific configuration
+[env]
+# Default environment variables for tests
+RUST_LOG = { value = "debug", force = false }
+RUST_BACKTRACE = { value = "1", force = false }
+CERBERUS_ENVIRONMENT = { value = "test", force = false }
+CERBERUS_TRADING_PAPER_TRADING = { value = "true", force = false }
+
+# Alias for common commands
+[alias]
+# Testing aliases
+t = "test"
+tc = "test --color=always"
+tq = "test --lib --quiet"
+tw = "watch -x test"
+
+# Quality aliases
+fmt-check = "fmt --all -- --check"
+clippy-all = "clippy --all-targets --all-features -- -D warnings"
+audit-check = "audit"
+
+# Coverage aliases
+cov = "tarpaulin --out Html --output-dir coverage"
+cov-ci = "tarpaulin --out Xml --output-dir coverage"
+
+# Build aliases
+br = "build --release"
+bd = "build"
+check-all = "check --all-targets --all-features"
+
+# Documentation aliases
+doc-open = "doc --open --no-deps"
+doc-private = "doc --document-private-items --no-deps"
+
+# Benchmark aliases
+bench-all = "bench"
+bench-crit = "bench --features criterion"
+
+# Profile-guided optimization
+[profile.release]
+# Optimize for performance in release builds
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Enable debug info for profiling
+debug = 1
+
+[profile.dev]
+# Optimize for fast compilation in development
+opt-level = 0
+debug = true
+split-debuginfo = "unpacked"
+incremental = true
+
+[profile.test]
+# Optimize tests for reasonable performance while keeping debug info
+opt-level = 1
+debug = true
+incremental = true
+
+[profile.bench]
+# Optimize benchmarks for maximum performance
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = true
+
+# Custom profiles for different scenarios
+[profile.test-release]
+# For performance testing
+inherits = "release"
+debug = true
+strip = false
+
+[profile.coverage]
+# For coverage testing
+inherits = "test"
+opt-level = 0
+overflow-checks = false
+
+[profile.fuzzing]
+# For fuzz testing
+inherits = "dev"
+opt-level = 1
+overflow-checks = true
+
+# Registry configuration
+[registry]
+default = "crates-io"
+
+[registries.crates-io]
+protocol = "sparse"
+
+# Source replacement disabled for now
+# [source.crates-io]
+# replace-with = "vendored-sources"
+
+# [source.vendored-sources]
+# directory = "vendor"
+
+# Network configuration
+[net]
+retry = 3
+git-fetch-with-cli = true
+
+# HTTP configuration
+[http]
+check-revoke = false
+multiplexing = true
+timeout = 30
+
+# Future compatibility
+[future-incompat-report]
+frequency = "always"
+
+# Unstable features (for nightly builds)
+[unstable]
+# Enable build-std for custom targets
+build-std = false
+
+# Enable timings for build analysis
+timings = ["info"]
+
+# Enable binary dependency depinfo
+binary-dep-depinfo = true

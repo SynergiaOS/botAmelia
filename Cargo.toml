@@ -1,0 +1,111 @@
+[package]
+name = "cerberus"
+version = "4.0.0"
+edition = "2021"
+authors = ["BotAmelia Team"]
+description = "High-performance leverage trading framework for aggressive memecoin trading"
+license = "MIT"
+repository = "https://github.com/SynergiaOS/BotAmelia"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+tokio-util = "0.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Database
+# rusqlite removed due to conflict with sqlx
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+hyper = { version = "0.14", features = ["full"] }
+axum = { version = "0.7", features = ["ws"] }
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Monitoring and Observability - SENTRY INTEGRATION
+sentry = { version = "0.34", features = ["tracing", "log", "tower", "reqwest", "rustls"] }
+sentry-tower = "0.34"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# Metrics
+metrics = "0.23"
+metrics-exporter-prometheus = "0.15"
+
+# Caching
+lru = "0.12"
+moka = { version = "0.12", features = ["future"] }
+
+# Cryptography and Security
+ring = "0.16"
+argon2 = "0.4"
+aes-gcm = "0.9"
+zeroize = { version = "1.6", features = ["derive"] }
+base64ct = "1.6"  # Force older version to avoid edition2024
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Configuration
+config = "0.14"
+dotenvy = "0.15"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+url = "2.5"
+regex = "1.10"
+once_cell = "1.19"
+parking_lot = "0.12"
+
+# Telegram/Discord integration
+teloxide = { version = "0.12", features = ["macros"] }
+serenity = { version = "0.12", features = ["client", "gateway", "rustls_backend", "model"] }
+
+# Financial calculations
+rust_decimal = { version = "1.33", features = ["serde-float"] }
+bigdecimal = "0.4"
+
+# Async utilities
+futures = "0.3"
+futures-util = "0.3"
+async-trait = "0.1"
+log = "0.4"
+env_logger = "0.10"
+rand = "0.8"
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+mockall = "0.12"
+tempfile = "3.8"
+env_logger = "0.10"
+rand = "0.8"
+
+[lib]
+name = "cerberus"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cerberus-bot"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
