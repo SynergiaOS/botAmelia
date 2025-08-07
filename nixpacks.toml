@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["rust", "cargo", "pkg-config", "openssl"]
+nixPkgs = ["rust", "cargo", "pkg-config", "openssl", "sqlite"]
 
 [phases.build]
 cmds = [
