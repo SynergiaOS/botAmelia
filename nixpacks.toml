@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["rust", "cargo", "pkg-config", "openssl"]
+
+[phases.build]
+cmds = [
+    "cargo build --release",
+    "strip target/release/cerberus-bot"
+]
+
+[start]
+cmd = "./target/release/cerberus-bot"

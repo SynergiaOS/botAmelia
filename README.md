@@ -207,16 +207,24 @@ cargo test --release -- --ignored stress_test
 cargo run --release
 ```
 
+### Railway (Recommended)
+```bash
+# Install Railway CLI
+npm install -g @railway/cli
+
+# Deploy
+railway login
+railway link
+railway up
+```
+
 ### Production (Docker)
 ```bash
 docker build -t cerberus .
 docker run -d --env-file .env cerberus
 ```
 
-### Cloud (Fly.io)
-```bash
-fly deploy
-```
+See [railway-deploy.md](railway-deploy.md) for detailed Railway deployment guide.
 
 ## 📚 Documentation
 
