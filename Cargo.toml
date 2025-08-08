@@ -22,7 +22,7 @@ toml = "0.8"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
 
 # HTTP client
-reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 hyper = { version = "0.14", features = ["full"] }
 axum = { version = "0.7", features = ["ws"] }
 tower = { version = "0.4", features = ["full"] }
