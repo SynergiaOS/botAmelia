@@ -10,7 +10,7 @@ pub mod email;
 pub mod sender;
 pub mod telegram;
 
-// pub use sender::AlertSender;
+pub use sender::AlertSender;
 
 /// Trait dla wysyłania alertów
 #[async_trait::async_trait]

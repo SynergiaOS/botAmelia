@@ -12,6 +12,7 @@
 
 pub mod alerts;
 pub mod api;
+pub mod bitcoin;
 pub mod cache;
 /// Cerberus v5.0 Trading System Library
 ///
@@ -21,11 +22,14 @@ pub mod cache;
 pub mod config;
 pub mod database;
 pub mod errors;
+pub mod indexer;
 pub mod monitoring;
+// pub mod redis; // temporarily disabled until productionization
 pub mod risk;
 pub mod security;
 pub mod signals;
 pub mod trading;
+pub mod wallets;
 
 // Re-export commonly used types
 pub use config::Config;

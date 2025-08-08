@@ -1,3 +1,9 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(unused_mut)]
+#![allow(clippy::all)]
+
 pub mod unit_cache;
 /// Test module organization for Cerberus v5.0
 ///

@@ -16,6 +16,7 @@ mod risk;
 mod security;
 mod signals;
 mod trading;
+mod wallets;
 
 use config::Config;
 use database::DatabaseManager;
@@ -82,10 +83,22 @@ impl CerberusApp {
         info!("Starting main application loop");
 
         // Uruchomienie serwera API w tle
+        // Inicjalizacja WalletManager + Sync
+        use crate::wallets::sync::WalletSynchronizer;
+        use crate::wallets::WalletManager;
+        let wallet_manager = Arc::new(
+            WalletManager::new(Arc::new(self.db_manager.pool().clone()))
+                .await
+                .unwrap_or_else(|_| panic!("WalletManager init failed")),
+        );
+        let wallet_sync = Arc::new(WalletSynchronizer::new(wallet_manager.clone()));
+
         let api_state = api::ApiState {
             config: self.config.clone(),
             db_manager: self.db_manager.clone(),
             metrics: self.metrics.clone(),
+            wallet_manager,
+            wallet_sync,
         };
 
         let api_future = tokio::spawn(async move {

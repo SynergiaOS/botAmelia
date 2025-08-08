@@ -76,6 +76,14 @@ parking_lot = "0.12"
 rust_decimal = { version = "1.33", features = ["serde-float"] }
 bigdecimal = "0.4"
 
+# Bitcoin support
+bitcoin = { version = "0.31", features = ["serde", "rand"] }
+bitcoincore-rpc = "0.18"
+bip39 = "2.0"
+secp256k1 = { version = "0.28", features = ["rand", "recovery"] }
+hex = "0.4"
+base64 = "0.21"
+
 # Async utilities
 futures = "0.3"
 futures-util = "0.3"
@@ -83,6 +91,7 @@ async-trait = "0.1"
 log = "0.4"
 env_logger = "0.10"
 rand = "0.8"
+redis = { version = "0.32.4", features = ["aio", "tokio-comp"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

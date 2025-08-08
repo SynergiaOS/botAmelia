@@ -1,3 +1,13 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(unused_mut)]
+#![allow(clippy::all)]
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(clippy::all)]
+
 use anyhow::Result;
 use cerberus::{
     config::Config,
@@ -15,7 +25,7 @@ use tokio::test;
 /// boundary values, and unusual scenarios gracefully.
 
 #[test]
-fn test_zero_values() {
+async fn test_zero_values() {
     // Test handling of zero values
     let portfolio = Portfolio::new(0.0);
     assert!(!portfolio.is_healthy());
@@ -45,7 +55,7 @@ fn test_zero_values() {
 }
 
 #[test]
-fn test_extreme_values() {
+async fn test_extreme_values() {
     // Test handling of extreme values
     let huge_portfolio = Portfolio::new(f64::MAX);
     assert!(huge_portfolio.is_healthy());
@@ -74,7 +84,7 @@ fn test_extreme_values() {
 }
 
 #[test]
-fn test_infinity_and_nan_handling() {
+async fn test_infinity_and_nan_handling() {
     // Test handling of infinity and NaN values
     let mut position = Position::new("TEST".to_string(), TradeSide::Long, 100.0, 5, 0.001);
 
@@ -92,7 +102,7 @@ fn test_infinity_and_nan_handling() {
 }
 
 #[test]
-fn test_unicode_and_special_characters() {
+async fn test_unicode_and_special_characters() {
     // Test handling of Unicode and special characters
     let unicode_tokens = vec![
         "🚀MOON🚀".to_string(),
@@ -120,7 +130,7 @@ fn test_unicode_and_special_characters() {
 }
 
 #[test]
-fn test_empty_and_whitespace_strings() {
+async fn test_empty_and_whitespace_strings() {
     // Test handling of empty and whitespace-only strings
     let problematic_strings = vec![
         "".to_string(),
@@ -146,7 +156,7 @@ fn test_empty_and_whitespace_strings() {
 }
 
 #[test]
-fn test_very_long_strings() {
+async fn test_very_long_strings() {
     // Test handling of very long strings
     let long_token = "A".repeat(10000);
     let very_long_token = "B".repeat(100000);
@@ -176,7 +186,7 @@ fn test_very_long_strings() {
 }
 
 #[test]
-fn test_rapid_price_changes() {
+async fn test_rapid_price_changes() {
     // Test handling of rapid price changes
     let mut position = Position::new(
         "VOLATILE".to_string(),
@@ -198,7 +208,7 @@ fn test_rapid_price_changes() {
 }
 
 #[test]
-fn test_liquidation_scenarios() {
+async fn test_liquidation_scenarios() {
     // Test various liquidation scenarios
     let mut position = Position::new(
         "LIQUIDATION_TEST".to_string(),
@@ -222,7 +232,7 @@ fn test_liquidation_scenarios() {
 }
 
 #[test]
-fn test_portfolio_with_many_positions() {
+async fn test_portfolio_with_many_positions() {
     // Test portfolio with many positions
     let mut portfolio = Portfolio::new(100000.0);
 
@@ -254,7 +264,7 @@ fn test_portfolio_with_many_positions() {
 }
 
 #[test]
-fn test_concurrent_modifications() {
+async fn test_concurrent_modifications() {
     use std::sync::{Arc, Mutex};
     use std::thread;
 
@@ -331,7 +341,7 @@ async fn test_async_stress() {
 }
 
 #[test]
-fn test_memory_pressure() {
+async fn test_memory_pressure() {
     // Test behavior under memory pressure
     let mut large_objects = Vec::new();
 
@@ -368,7 +378,7 @@ fn test_memory_pressure() {
 }
 
 #[test]
-fn test_configuration_edge_cases() {
+async fn test_configuration_edge_cases() {
     let mut config = Config::default();
 
     // Test extreme configuration values
@@ -388,7 +398,7 @@ fn test_configuration_edge_cases() {
 }
 
 #[test]
-fn test_timestamp_edge_cases() {
+async fn test_timestamp_edge_cases() {
     // Test edge cases with timestamps
     let past_signal = Signal::new_with_timestamp(
         "PAST".to_string(),

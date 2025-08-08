@@ -14,14 +14,17 @@ use tracing::info;
 
 use crate::errors::CerberusError;
 
+use crate::wallets::sync::WalletSynchronizer;
+use crate::wallets::WalletManager;
 use crate::{config::Config, database::DatabaseManager, monitoring::SystemMetrics};
 
 pub mod handlers;
 pub mod middleware;
 pub mod models;
+pub mod wallet_handlers;
 
 pub use handlers::*;
-// pub use models::*;
+pub use wallet_handlers::*;
 
 /// Stan aplikacji dla API
 #[derive(Clone)]
@@ -29,6 +32,8 @@ pub struct ApiState {
     pub config: Arc<Config>,
     pub db_manager: Arc<DatabaseManager>,
     pub metrics: Arc<SystemMetrics>,
+    pub wallet_manager: Arc<WalletManager>,
+    pub wallet_sync: Arc<WalletSynchronizer>,
 }
 
 /// Serwer HTTP API dla integracji z Kestra
@@ -44,12 +49,32 @@ impl ApiServer {
         db_manager: Arc<DatabaseManager>,
         metrics: Arc<SystemMetrics>,
     ) -> Result<Self> {
+        // Backward-compatible constructor (without wallet manager)
+        // Initialize lightweight placeholders for wallet components
+        let db_pool = db_manager.pool().clone();
+        let wm = Arc::new(
+            crate::wallets::WalletManager::new(Arc::new(db_pool))
+                .await
+                .map_err(|e| anyhow::anyhow!("WalletManager init error: {}", e))?,
+        );
+        let ws = Arc::new(crate::wallets::sync::WalletSynchronizer::new(wm.clone()));
+
         let state = ApiState {
             config,
             db_manager,
             metrics,
+            wallet_manager: wm,
+            wallet_sync: ws,
         };
 
+        Ok(Self {
+            state,
+            listener: None,
+        })
+    }
+
+    /// Tworzy nowy serwer API z podanym stanem
+    pub async fn new_with_state(state: ApiState) -> Result<Self> {
         Ok(Self {
             state,
             listener: None,
@@ -91,6 +116,21 @@ impl ApiServer {
             .route("/api/positions", get(get_positions_handler))
             .route("/api/positions/:id", get(get_position_handler))
             .route("/api/positions/:id/close", post(close_position_handler))
+            // Wallet endpoints
+            .route("/api/wallets", post(create_wallet_handler))
+            .route("/api/wallets", get(list_wallets_handler))
+            .route("/api/wallets/:id", get(get_wallet_handler))
+            .route("/api/wallets/:id", post(update_wallet_handler))
+            .route("/api/wallets/:id/delete", post(delete_wallet_handler))
+            .route("/api/wallets/:id/sync", post(sync_wallet_handler))
+            .route(
+                "/api/wallets/:id/balances",
+                get(get_wallet_balances_handler),
+            )
+            .route(
+                "/api/wallets/:id/sync-stats",
+                get(get_wallet_sync_stats_handler),
+            )
             // System control endpoints
             .route("/api/system/status", get(system_status_handler))
             .route("/api/system/emergency-stop", post(emergency_stop_handler))

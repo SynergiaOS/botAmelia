@@ -1,3 +1,9 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(unused_mut)]
+#![allow(clippy::all)]
+
 /// Test utilities and helpers for Cerberus v5.0 testing
 ///
 /// This module provides common utilities, mocks, and helpers

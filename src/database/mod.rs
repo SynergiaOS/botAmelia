@@ -20,7 +20,21 @@ pub struct DatabaseManager {
 impl DatabaseManager {
     /// Tworzy nowy manager bazy danych
     pub async fn new(config: &DatabaseConfig) -> Result<Self> {
-        info!("Initializing database manager");
+        let manager = Self::new_without_migrations(config).await?;
+
+        // Uruchomienie migracji
+        manager.run_migrations().await?;
+
+        // Sprawdzenie stanu bazy danych
+        manager.health_check().await?;
+
+        info!("Database manager initialized successfully");
+        Ok(manager)
+    }
+
+    /// Tworzy nowy manager bazy danych bez uruchamiania migracji
+    pub async fn new_without_migrations(config: &DatabaseConfig) -> Result<Self> {
+        info!("Initializing database manager without migrations");
 
         // Tworzenie katalogu dla bazy danych jeśli nie istnieje
         if let Some(parent) = config.path.parent() {
@@ -54,13 +68,6 @@ impl DatabaseManager {
             config: config.clone(),
         };
 
-        // Uruchomienie migracji
-        manager.run_migrations().await?;
-
-        // Sprawdzenie stanu bazy danych
-        manager.health_check().await?;
-
-        info!("Database manager initialized successfully");
         Ok(manager)
     }
 
@@ -73,10 +80,12 @@ impl DatabaseManager {
     async fn run_migrations(&self) -> Result<()> {
         info!("Running database migrations");
 
-        // Tutaj będą uruchamiane migracje
-        // migrations::run_all(&self.pool).await
-        //     .context("Failed to run database migrations")?;
-        // Mock implementation for now
+        // SQLx migrator expects a folder named `migrations` at project root
+        // This will apply all pending migrations in order
+        sqlx::migrate!("./migrations")
+            .run(&*self.pool)
+            .await
+            .context("Failed to run database migrations")?;
 
         info!("Database migrations completed successfully");
         Ok(())
