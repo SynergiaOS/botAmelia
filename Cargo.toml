@@ -44,7 +44,7 @@ lru = "0.12"
 moka = { version = "0.12", features = ["future"] }
 
 # Cryptography and Security
-ring = "0.16"
+ring = "0.17"
 argon2 = "0.4"
 aes-gcm = "0.9"
 zeroize = { version = "1.6", features = ["derive"] }
