@@ -26,7 +26,7 @@ reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
 hyper = { version = "0.14", features = ["full"] }
 axum = { version = "0.7", features = ["ws"] }
 tower = { version = "0.4", features = ["full"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Monitoring and Observability - SENTRY INTEGRATION
 sentry = { version = "0.34", features = ["tracing", "log", "tower", "reqwest", "rustls"] }
