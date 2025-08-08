@@ -96,7 +96,7 @@ redis = { version = "0.32.4", features = ["aio", "tokio-comp"] }
 [dev-dependencies]
 tokio-test = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
-mockall = "0.12"
+mockall = "0.13"
 tempfile = "3.8"
 env_logger = "0.10"
 rand = "0.8"
