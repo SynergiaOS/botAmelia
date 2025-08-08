@@ -97,7 +97,7 @@ jobs:
       run: cargo build --release --verbose
 
     - name: Upload binary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: cerberus-binary
         path: target/release/cerberus
